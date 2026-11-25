@@ -1,0 +1,7 @@
+# SAMPLE - fictional data, edit or replace before running
+# branch.oid 9b8a7c6d5e4f30211203948576a6b5c4d3e2f1a0
+# branch.head dev
+# branch.upstream origin/dev
+# branch.ab +0 -2
+1 .M N... 100644 100644 100644 eeee555 ffff666 index.html
+1 .D N... 100644 100644 000000 1111aaa 0000000 old.css

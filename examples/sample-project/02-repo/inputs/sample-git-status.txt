@@ -1,0 +1,9 @@
+# SAMPLE - fictional data, edit or replace before running
+# branch.oid 3f2a9c1d7e5b4a60918273645546372819a0b1c2
+# branch.head main
+# branch.upstream origin/main
+# branch.ab +1 -0
+1 .M N... 100644 100644 100644 aaaa111 bbbb222 src/api.py
+1 .M N... 100644 100644 100644 cccc333 dddd444 README.md
+? .env
+? notes.txt

@@ -1,0 +1,12 @@
+{
+  "name": "Sample workspace - Jordan Avery repos",
+  "fields": {
+    "workspace_path": "~/sample-workspace"
+  },
+  "instances": {
+    "02-repo": [
+      "alpha-api",
+      "beta-site"
+    ]
+  }
+}

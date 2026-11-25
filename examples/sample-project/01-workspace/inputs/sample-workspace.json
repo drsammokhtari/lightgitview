@@ -1,0 +1,18 @@
+{
+  "_sample": "SAMPLE - fictional data, edit or replace before running",
+  "workspace_path": "~/sample-workspace",
+  "entries": [
+    {
+      "folder": "alpha-api",
+      "is_repo": true
+    },
+    {
+      "folder": "beta-site",
+      "is_repo": true
+    },
+    {
+      "folder": "old-notes",
+      "is_repo": false
+    }
+  ]
+}
