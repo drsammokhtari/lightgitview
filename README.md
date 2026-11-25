@@ -16,7 +16,7 @@
 - A side panel lists branches, commits you do not have yet, and open pull requests.
 - It warns before you commit a file that looks like a secret, such as `.env`.
 
-It is one 1.6 MB app that runs your own `git`. No account, no sign-in and no network use of its own.
+It is one small app (about a 1.3 MB download) that runs your own `git`. No account, no sign-in and no network use of its own.
 
 ## Install
 
@@ -25,8 +25,12 @@ Pick one.
 **Homebrew**
 
 ```sh
-brew install --cask drsammokhtari/tap/lightgitview
+brew tap drsammokhtari/tap
+brew trust drsammokhtari/tap
+brew install --cask lightgitview
 ```
+
+Recent Homebrew versions refuse casks from a tap you have not trusted, so the `brew trust` line is needed once. Older versions do not have that command: skip it.
 
 **Download**
 
