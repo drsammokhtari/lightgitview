@@ -10,9 +10,9 @@
 
 ## Walkthrough
 
-[![Watch the walkthrough: 1 minute 55 seconds](docs/screenshot-side-panel.png)](docs/walkthrough.mp4)
+[![Watch the walkthrough on YouTube: 1 minute 55 seconds](docs/screenshot-side-panel.png)](https://youtu.be/D_sP2yl53xY)
 
-A 2-minute tour, with captions: install, first launch, the repo list, commit, pull and push, discard and ignore, workspaces, the side panel and the secret warning. [Watch it](docs/walkthrough.mp4) (GitHub plays it in the browser). Chapters:
+A 2-minute tour, with captions: install, first launch, the repo list, commit, pull and push, discard and ignore, workspaces, the side panel and the secret warning. [Watch it on YouTube](https://youtu.be/D_sP2yl53xY), or [play the file here](docs/walkthrough.mp4). Chapters:
 
 | Time | Chapter |
 |---|---|
