@@ -30,6 +30,7 @@ final class Store: ObservableObject {
     @Published var banner: Banner?
     @Published var side: [String: SideInfo] = [:]
     @Published var showClone = false
+    @Published var revision: [String: Int] = [:]   // bumps after every full reload, so open panes can re-read
     @Published var focusRequest: String?   // a file the tree asks the repo page to show
     @Published var trees: [String: [FileNode]] = [:]
     @Published var treeTruncated: Set<String> = []
@@ -142,16 +143,49 @@ final class Store: ObservableObject {
         await withTaskGroup(of: Void.self) { g in
             for r in found { g.addTask { await self.refresh(r, fetch: true) } }
         }
+        if let r = selectedRepo { await reload(r) }
         scanning = false
     }
 
     /// 02-repo: status, then line counts.
+    /// Runs `work` while holding the repo's gate, so network git jobs on one repo never overlap.
+    func gated<T>(_ repo: Repo, _ work: () async -> T) async -> T {
+        await RepoGate.shared.acquire(repo.id)
+        let r = await work()
+        await RepoGate.shared.release(repo.id)
+        return r
+    }
+
+    /// A fetch that leaves FETCH_HEAD alone (so it cannot confuse a pull) and never overlaps another job on the repo.
+    func fetchRemote(_ repo: Repo, remote: String? = nil) async -> GitResult {
+        await gated(repo) { await Git.run(["fetch", "--quiet", "--prune", "--no-write-fetch-head"] + (remote.map { [$0] } ?? []), in: repo.url, timeout: 30) }
+    }
+
+    /// Reads the repo's status (fast), then, when asked, fetches from the remote and reads it again so the pull count is true.
     func refresh(_ repo: Repo, fetch: Bool = false) async {
-        if fetch { _ = await Git.run(["fetch", "--quiet", "--prune"], in: repo.url) }
-        let r = await Git.run(["status", "--porcelain=v2", "--branch", "--untracked-files=all", "-z"], in: repo.url)
+        await readStatus(repo)
+        if fetch {
+            _ = await fetchRemote(repo)
+            await readStatus(repo)
+        }
+    }
+
+    /// Everything the screen shows about a repo, brought up to date together: status and counts, the right-hand panel
+    /// (commits, branches, pull requests) and the file tree. Every action ends with this, so no panel is left stale.
+    func reload(_ repo: Repo, fetch: Bool = false) async {
+        await refresh(repo, fetch: fetch)
+        await withTaskGroup(of: Void.self) { g in
+            g.addTask { await self.loadSide(repo) }
+            g.addTask { await self.loadTree(repo) }
+        }
+        revision[repo.id, default: 0] += 1
+    }
+
+    func readStatus(_ repo: Repo) async {
+        let r = await Git.run(["--no-optional-locks", "status", "--porcelain=v2", "--branch", "--untracked-files=all", "-z"], in: repo.url)
         guard r.ok else { setError("\(repo.name): \(r.text)"); return }
         var st = StatusParser.parse(r.out)
-        let ns = await Git.run(["diff", "HEAD", "--numstat"], in: repo.url)
+        let ns = await Git.run(["--no-optional-locks", "diff", "HEAD", "--numstat"], in: repo.url)
         let counts = ns.ok ? StatusParser.numstat(ns.out) : [:]
         for i in st.changes.indices {
             if let c = counts[st.changes[i].path] {
@@ -169,7 +203,7 @@ final class Store: ObservableObject {
     /// Right sidebar: branches, commits not yet local, commits not yet pushed, pull requests.
     func loadSide(_ repo: Repo) async {
         var info = side[repo.id] ?? SideInfo()
-        let b = await Git.run(["for-each-ref", "--format=%(HEAD)%09%(refname)%09%(refname:short)%09%(upstream:track)", "refs/heads", "refs/remotes"], in: repo.url)
+        let b = await Git.run(["for-each-ref", "--format=%(HEAD)%09%(refname)%09%(refname:short)%09%(upstream:track)%09%(upstream:short)", "refs/heads", "refs/remotes"], in: repo.url)
         var locals = Set<String>()
         if b.ok { info.branches = SideParser.branches(b.out, locals: &locals) }
         let fmt = "--format=%h%x09%an%x09%ar%x09%s"
@@ -191,11 +225,53 @@ final class Store: ObservableObject {
         side[repo.id] = info
     }
 
+    // MARK: deleting branches
+    /// Branches that are never deleted from here: main, master and the remote's default branch.
+    func protectedNames(_ repo: Repo) async -> Set<String> {
+        var out: Set<String> = ["main", "master"]
+        let r = await Git.run(["symbolic-ref", "--short", "refs/remotes/origin/HEAD"], in: repo.url)
+        if r.ok { let t = r.out.trimmingCharacters(in: .whitespacesAndNewlines); out.insert(String(t.drop(while: { $0 != "/" }).dropFirst())) }
+        return out
+    }
+
+    struct BranchFacts { var isProtected = false; var unmerged: Int? = nil; var base = ""; var openPR: PullRequest? = nil }
+
+    /// What to tell the person before a branch is deleted: is it protected, how many commits exist only on it, which pull request uses it.
+    func branchFacts(_ repo: Repo, _ b: BranchInfo) async -> BranchFacts {
+        var f = BranchFacts()
+        let short = b.isRemote ? (b.remoteBranch ?? b.name) : b.name
+        f.isProtected = await protectedNames(repo).contains(short)
+        let head = await Git.run(["symbolic-ref", "--short", "refs/remotes/origin/HEAD"], in: repo.url)
+        var base = head.ok ? head.out.trimmingCharacters(in: .whitespacesAndNewlines) : ""
+        if base.isEmpty { base = (await Git.run(["rev-parse", "--verify", "-q", "origin/main"], in: repo.url)).ok ? "origin/main" : "main" }
+        f.base = base
+        let ref = b.isRemote ? b.name : b.name
+        let n = await Git.run(["rev-list", "--count", "\(base)..\(ref)"], in: repo.url)
+        f.unmerged = n.ok ? Int(n.out.trimmingCharacters(in: .whitespacesAndNewlines)) : nil
+        f.openPR = side[repo.id]?.prs.first { $0.headRefName == short }
+        return f
+    }
+
+    /// `git branch -d` refuses a branch with commits that are not merged; `force` uses -D. Returns the error text or nil.
+    func deleteLocalBranch(_ repo: Repo, _ name: String, force: Bool) async -> String? {
+        let r = await Git.run(["branch", force ? "-D" : "-d", "--", name], in: repo.url)
+        await reload(repo)
+        return r.ok ? nil : r.text
+    }
+
+    /// `git push <remote> --delete <branch>`, then a pruning fetch so the list is current. Returns the error text or nil.
+    func deleteRemoteBranch(_ repo: Repo, _ remote: String, _ branch: String) async -> String? {
+        let r = await gated(repo) { await Git.run(["push", remote, "--delete", branch], in: repo.url) }
+        _ = await fetchRemote(repo, remote: remote)
+        await reload(repo)
+        return r.ok ? nil : r.text
+    }
+
     func switchBranch(_ repo: Repo, _ b: BranchInfo) async {
         busy = true; defer { busy = false }
         let r = await Git.run(["switch", b.switchName], in: repo.url)
         r.ok ? setInfo("Switched to \(b.switchName).") : setError(r.text)
-        await refresh(repo); await loadSide(repo)
+        await reload(repo)
     }
 
     func checkoutPR(_ repo: Repo, _ pr: PullRequest) async {
@@ -203,7 +279,7 @@ final class Store: ObservableObject {
         busy = true; defer { busy = false }
         let r = await Git.exec(gh, ["pr", "checkout", String(pr.number)], in: repo.url)
         r.ok ? setInfo("Checked out #\(pr.number).") : setError(r.text)
-        await refresh(repo); await loadSide(repo)
+        await reload(repo)
     }
 
     func toggle(_ repo: Repo, _ path: String) {
@@ -246,24 +322,40 @@ final class Store: ObservableObject {
             messages[repo.id] = ""
             setInfo("Committed \(paths.count) file\(paths.count == 1 ? "" : "s").")
         } else { setError(c.text) }
-        await refresh(repo); await loadSide(repo)
+        await reload(repo)
     }
 
+    /// Pull = fetch, then fast-forward to the upstream branch by name. It does not use `git pull`, which merges whatever is
+    /// in FETCH_HEAD and failed with "Cannot fast-forward to multiple branches" when another fetch overlapped it.
     func pull(_ repo: Repo) async {
         busy = true; defer { busy = false }
-        let r = await Git.run(["pull", "--ff-only"], in: repo.url)
-        r.ok ? setInfo(r.text.isEmpty ? "Pulled." : lastLine(r.text)) : setError(r.text)
-        await refresh(repo); await loadSide(repo)
+        let err: String? = await gated(repo) {
+            let head = await Git.run(["symbolic-ref", "-q", "HEAD"], in: repo.url)
+            guard head.ok else { return "You are not on a branch, so there is nothing to pull." }
+            let ref = head.out.trimmingCharacters(in: .whitespacesAndNewlines)
+            let rn = await Git.run(["for-each-ref", "--format=%(upstream:remotename)", ref], in: repo.url)
+            let remote = rn.out.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !remote.isEmpty else { return "This branch has no upstream branch to pull from." }
+            let f = await Git.run(["fetch", "--quiet", "--prune", remote], in: repo.url, timeout: 60)
+            guard f.ok else { return f.text }
+            let m = await Git.run(["merge", "--ff-only", "@{upstream}"], in: repo.url)
+            if !m.ok { return m.text }
+            self.pullNote = m.text
+            return nil
+        }
+        if let err { setError(err) } else { setInfo(lastLine(pullNote.isEmpty ? "Pulled." : pullNote)) }
+        await reload(repo)
     }
+    private var pullNote = ""
 
     func push(_ repo: Repo) async {
         busy = true; defer { busy = false }
         let st = statuses[repo.id]
         var args = ["push"]
         if st?.upstream == nil, let b = st?.branch, !b.isEmpty { args = ["push", "-u", "origin", b] }
-        let r = await Git.run(args, in: repo.url)
+        let r = await gated(repo) { await Git.run(args, in: repo.url, timeout: 120) }
         r.ok ? setInfo("Pushed.") : setError(r.text)
-        await refresh(repo); await loadSide(repo)
+        await reload(repo)
     }
 
     /// Throws away local changes in the files and in the list: new staged files are removed, other tracked files go back
@@ -303,7 +395,7 @@ final class Store: ObservableObject {
         let gone = Set(cs.map(\.path))
         if var st = statuses[repo.id] { st.changes.removeAll { gone.contains($0.path) }; statuses[repo.id] = st }
         ticked[repo.id] = (ticked[repo.id] ?? []).subtracting(gone)
-        await refresh(repo); await loadSide(repo)
+        await reload(repo)
         if let e = errors.first { setError(e) } else { setInfo("Discarded \(cs.count) change\(cs.count == 1 ? "" : "s").") }
     }
 
@@ -323,10 +415,10 @@ final class Store: ObservableObject {
         }
         if !untrack.isEmpty {
             let r = await Git.run(["rm", "--cached", "-r", "-q", "--ignore-unmatch", "--"] + untrack, in: repo.url)
-            if !r.ok { setError(r.text); await refresh(repo); return }
+            if !r.ok { setError(r.text); await reload(repo); return }
         }
         setInfo(add.isEmpty ? "Already in .gitignore." : "Added \(add.joined(separator: ", ")) to .gitignore.")
-        await refresh(repo)
+        await reload(repo)
     }
 
     /// Tracked files an ignore choice would have to untrack: the file, the whole folder, or every file with that extension.
@@ -417,7 +509,7 @@ final class Store: ObservableObject {
     func saveFile(_ repo: Repo, _ path: String, _ text: String) async -> String? {
         do { try text.write(to: repo.url.appendingPathComponent(path), atomically: true, encoding: .utf8) }
         catch { return error.localizedDescription }
-        await refresh(repo); await loadTree(repo)
+        await reload(repo)
         return nil
     }
 
@@ -505,7 +597,7 @@ final class Store: ObservableObject {
     func closePR(_ repo: Repo, _ number: Int, deleteBranch: Bool) async -> String? {
         guard let gh = ghPath else { return "The GitHub CLI (gh) is not installed." }
         let r = await Git.exec(gh, ["pr", "close", String(number)] + (deleteBranch ? ["--delete-branch"] : []), in: repo.url)
-        await loadSide(repo)
+        await reload(repo)
         return r.ok ? nil : r.text
     }
 

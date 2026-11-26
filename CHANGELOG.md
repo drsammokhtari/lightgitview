@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.3.0 · 2026-11-26
+- **Fixed: "Cannot fast-forward to multiple branches" on Pull.** The app's own background fetches overlapped `git pull` and left FETCH_HEAD with several entries, so the first Pull failed and the second worked. Pull now runs `git fetch` and then `git merge --ff-only` on the upstream branch by name; the app's fetches no longer write FETCH_HEAD; and fetch, pull and push never overlap on one repo.
+- **Everything stays up to date:** every action (Refresh, Pull, Push, Commit, Discard, Ignore, Save, switching or deleting a branch, closing a pull request, cloning) now re-reads the whole repo: the counts in the repo list, the file tree, the changes list, the open file and its diff, and the right-hand panel. The app also re-reads the selected repo when you come back to it from another app. A fetch that hangs is stopped after 30 seconds, and the status shows first, then is corrected after the fetch.
+- **Delete branches safely** from the right-hand panel: right-click a branch for Delete local branch, Delete branch on origin, or Delete local and origin. main, master, the remote's default branch and the branch you are on are never deleted; unmerged commits and open pull requests are named first; git's safe delete runs first and force-deleting needs a second yes; deleting on origin asks you to type the branch name.
+- **Close a pull request from its row** in the panel: Close, or Close and delete its branch (GitHub cannot delete a pull request, so it is closed).
+
 ## v1.2.0 · 2026-11-26
 - Right-click a changed file or folder for more actions: include or exclude from the commit, reveal in Finder, open, copy path, ignore, discard. The same list is under a new "..." button on each row.
 - **Edit files:** click a file in the tree or the changes list. A changed file opens on its diff with an **Edit** tab; an unchanged file opens in the editor. Save with ⌘S; the changes list and counts update. Moving to another file with unsaved edits asks Save or Don't Save. Text files up to 1 MB; binary, larger and non-UTF-8 files say why they can't be edited.

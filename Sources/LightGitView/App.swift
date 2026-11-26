@@ -46,6 +46,48 @@ struct LightGitViewApp: App {
                 let dup = await s.cloneRepo(source: remote, parent: tmpParent, folder: "alpha-copy", workspaceIDs: [])
                 let bad = await s.cloneRepo(source: "/no/such/remote.git", parent: tmpParent, folder: "nope", workspaceIDs: [])
                 print("clone err=\(cerr ?? "none") listed=\(s.allRepos.contains { $0.name == "alpha-copy" }) inWorkspace=\(inWs) duplicate=\(dup != nil) failedLeftover=\(FileManager.default.fileExists(atPath: tmpParent + "/nope")) folder=\(CloneSource.folderName(from: "git@github.com:me/app.git")) short=\(CloneSource.isShorthand("me/app")) url=\(CloneSource.isShorthand("https://github.com/me/app"))")
+                let cp = tmpParent + "/alpha-copy"
+                let cr = Repo(url: URL(fileURLWithPath: cp))
+                let id = ["-c", "user.name=T", "-c", "user.email=t@example.com"]
+                _ = await Git.run(["branch", "feature-x"], in: cr.url); _ = await Git.run(["push", "-q", "origin", "feature-x"], in: cr.url)
+                _ = await Git.run(["checkout", "-q", "-b", "wip"], in: cr.url)
+                try? "x\n".write(toFile: cp + "/wip.txt", atomically: true, encoding: .utf8)
+                _ = await Git.run(["add", "wip.txt"], in: cr.url); _ = await Git.run(id + ["commit", "-q", "-m", "wip"], in: cr.url)
+                _ = await Git.run(["checkout", "-q", "main"], in: cr.url)
+                let prot = await s.protectedNames(cr)
+                let wipFacts = await s.branchFacts(cr, BranchInfo(name: "wip", isRemote: false, isCurrent: false, track: ""))
+                let wipSafe = await s.deleteLocalBranch(cr, "wip", force: false)
+                let wipForce = await s.deleteLocalBranch(cr, "wip", force: true)
+                let fxLocal = await s.deleteLocalBranch(cr, "feature-x", force: false)
+                let fxRemote = await s.deleteRemoteBranch(cr, "origin", "feature-x")
+                let left = await Git.run(["branch", "-a"], in: cr.url).out
+                print("branches protected=\(prot.contains("main")) unmerged=\(wipFacts.unmerged ?? -1) safeRefused=\((wipSafe ?? "").contains("not fully merged")) force=\(wipForce ?? "ok") local=\(fxLocal ?? "ok") remote=\(fxRemote ?? "ok") gone=\(!left.contains("feature-x") && !left.contains("wip"))")
+                try? "fresh\n".write(toFile: cp + "/fresh.txt", atomically: true, encoding: .utf8)
+                let rev0 = s.revision[cr.id] ?? 0
+                await s.reload(cr)
+                let treeHas = (s.trees[cr.id] ?? []).contains { $0.name == "fresh.txt" }
+                let statusHas = s.statuses[cr.id]?.changes.contains { $0.path == "fresh.txt" } ?? false
+                let slow = await Git.exec("/bin/sleep", ["5"], in: URL(fileURLWithPath: "/tmp"), timeout: 1)
+                print("reload tree=\(treeHas) status=\(statusHas) revision=\((s.revision[cr.id] ?? 0) - rev0) timeout=\(slow.code)")
+                let other = tmpParent + "/other"
+                _ = await Git.run(["clone", "-q", remote, other], in: URL(fileURLWithPath: tmpParent))
+                try? "p\n".write(toFile: other + "/p.txt", atomically: true, encoding: .utf8)
+                _ = await Git.run(["add", "p.txt"], in: URL(fileURLWithPath: other)); _ = await Git.run(id + ["commit", "-q", "-m", "from other"], in: URL(fileURLWithPath: other))
+                _ = await Git.run(["push", "-q", "origin", "main"], in: URL(fileURLWithPath: other))
+                var pullErrors = 0
+                for round in 0..<5 {
+                    await withTaskGroup(of: Void.self) { g in
+                        g.addTask { await s.refresh(cr, fetch: true) }
+                        g.addTask { await s.refresh(cr, fetch: true) }
+                        g.addTask { await s.pull(cr) }
+                    }
+                    if s.banner?.isError == true { pullErrors += 1 }
+                    try? "r\(round)\n".write(toFile: other + "/p.txt", atomically: true, encoding: .utf8)
+                    _ = await Git.run(id + ["commit", "-q", "-am", "round \(round)"], in: URL(fileURLWithPath: other))
+                    _ = await Git.run(["push", "-q", "origin", "main"], in: URL(fileURLWithPath: other))
+                }
+                await s.pull(cr)
+                print("pull errors=\(pullErrors) behind=\(s.statuses[cr.id]?.behind ?? -1) banner=\(s.banner?.isError == true ? "error" : "ok")")
                 try? FileManager.default.removeItem(atPath: tmpParent)
                 let tree = TreeBuilder.build(["src/b.py", "README.md", "src/a/x.txt", "docs/z.md", "src/a/y.txt"])
                 let top = tree.map { $0.name + ($0.isDir ? "/" : "") }.joined(separator: ",")

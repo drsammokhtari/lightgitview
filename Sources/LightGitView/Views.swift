@@ -20,6 +20,9 @@ struct ContentView: View {
             }
             else { EmptyState() }
         }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            if let r = store.selectedRepo, !store.busy { Task { await store.reload(r) } }
+        }
         .sheet(isPresented: $showRoots) { RootsSheet() }
         .sheet(isPresented: $store.showClone) { CloneSheet().environmentObject(store) }
         .toolbar {
@@ -79,7 +82,7 @@ struct Sidebar: View {
             .overlay { if store.repos.isEmpty && !store.scanning { Text(store.currentWorkspace == nil ? "No repos found" : "No repos in this workspace").foregroundStyle(.secondary) } }
         }
         .onChange(of: store.selected) { _, new in
-            if let r = store.selectedRepo, new != nil { Task { await store.refresh(r, fetch: true) } }
+            if let r = store.selectedRepo, new != nil { Task { await store.reload(r, fetch: true) } }
         }
         .sheet(isPresented: $showRoots) { RootsSheet() }
         .sheet(isPresented: $showWorkspaces) { WorkspacesSheet() }
@@ -293,6 +296,7 @@ struct SidePanel: View {
                             Spacer()
                         }.contentShape(Rectangle())
                     }.buttonStyle(.plain).disabled(store.busy)
+                    .contextMenu { branchMenu(b) }
                     .help(b.isCurrent ? "Current branch" : "Switch to \(b.switchName)")
                     .accessibilityLabel(b.isCurrent ? "\(b.name), current branch" : "Switch to \(b.name)")
                 }
@@ -307,6 +311,10 @@ struct SidePanel: View {
                             Button("Review…") { reviewing = pr }
                             Button("Open") { if let u = URL(string: pr.url) { NSWorkspace.shared.open(u) } }
                             Button("Check out") { Task { await store.checkoutPR(repo, pr) } }.disabled(store.busy)
+                            Menu("Close…") {
+                                Button("Close pull request") { askClosePR(pr, deleteBranch: false) }
+                                Button("Close and delete its branch…", role: .destructive) { askClosePR(pr, deleteBranch: true) }
+                            }.menuStyle(.borderlessButton).fixedSize().disabled(store.busy)
                         }.controlSize(.small)
                     }.padding(.vertical, 2)
                 }
@@ -316,6 +324,79 @@ struct SidePanel: View {
         .task { await store.loadSide(repo) }
         .sheet(item: $reviewing) { pr in PRSheet(repo: repo, number: pr.number).environmentObject(store) }
     }
+    // MARK: deleting branches and closing pull requests, with checks first
+    enum BranchScope { case local, origin, both }
+
+    @ViewBuilder func branchMenu(_ b: BranchInfo) -> some View {
+        if b.isRemote {
+            Button("Delete branch on \(b.remoteName ?? "origin")…", role: .destructive) { askDeleteBranch(b, .origin) }
+        } else {
+            Button("Delete local branch…", role: .destructive) { askDeleteBranch(b, .local) }
+                .disabled(b.isCurrent)
+            if b.remoteRef != nil {
+                Button("Delete branch on \(b.remoteName ?? "origin")…", role: .destructive) { askDeleteBranch(b, .origin) }
+                Button("Delete local and \(b.remoteName ?? "origin")…", role: .destructive) { askDeleteBranch(b, .both) }
+                    .disabled(b.isCurrent)
+            }
+        }
+    }
+
+    func notify(_ title: String, _ message: String) {
+        let a = NSAlert(); a.messageText = title; a.informativeText = message; a.addButton(withTitle: "OK"); a.runModal()
+    }
+
+    /// Never deletes main, master or the default branch, or the branch you are on. Warns about unmerged commits and open pull requests.
+    func askDeleteBranch(_ b: BranchInfo, _ scope: BranchScope) {
+        Task {
+            let name = b.isRemote ? (b.remoteBranch ?? b.name) : b.name
+            let facts = await store.branchFacts(repo, b)
+            if facts.isProtected { notify("“\(name)” is protected", "main, master and the remote's default branch are never deleted from here. Do that on GitHub if you really mean it."); return }
+            if scope != .origin && b.isCurrent { notify("“\(name)” is checked out", "Switch to another branch first, then delete it."); return }
+            var facts_: [String] = []
+            if let n = facts.unmerged, n > 0 { facts_.append("\(n) commit\(n == 1 ? "" : "s") on it \(n == 1 ? "is" : "are") not in \(facts.base).") }
+            if let pr = facts.openPR, scope != .local { facts_.append("Pull request #\(pr.number) “\(pr.title)” uses this branch. Deleting it on the remote closes that pull request.") }
+            let detail = facts_.isEmpty ? "" : "\n\n" + facts_.joined(separator: "\n")
+            let remote = b.remoteName ?? "origin"
+
+            if scope == .local {
+                guard confirm("Delete the local branch “\(name)”?", "Only the branch on this Mac is deleted. Nothing changes on \(remote)." + detail, button: "Delete") else { return }
+                await deleteLocal(name, b)
+                return
+            }
+            let where_ = scope == .both ? "on this Mac and on \(remote)" : "on \(remote)"
+            let typed = promptText("Delete “\(name)” \(where_)?", "The branch is removed from \(remote), for everyone who uses it. Anyone with a copy can push it back, but it is gone from the remote until then." + detail + "\n\nType \(name) to confirm.", "")
+            guard let typed else { return }
+            guard typed.trimmingCharacters(in: .whitespaces) == name else { notify("Name did not match", "Nothing was deleted."); return }
+            if scope == .both { guard await deleteLocal(name, b) else { return } }   // local first: a refusal there leaves the remote alone
+            if let err = await store.deleteRemoteBranch(repo, remote, name) { store.setError("Could not delete \(name) on \(remote): \(err)") }
+            else { store.setInfo(scope == .both ? "Deleted \(name) locally and on \(remote)." : "Deleted \(name) on \(remote).") }
+        }
+    }
+
+    /// Tries the safe delete first. If git says the branch is not merged, asks before forcing. Returns true when the branch is gone.
+    @discardableResult func deleteLocal(_ name: String, _ b: BranchInfo) async -> Bool {
+        if let err = await store.deleteLocalBranch(repo, name, force: false) {
+            guard err.lowercased().contains("not fully merged") else { store.setError(err); return false }
+            guard confirm("“\(name)” has commits that are not merged", "These commits exist only on this branch. If you delete it they are hard to get back. Delete it anyway?", button: "Delete anyway") else { return false }
+            if let err2 = await store.deleteLocalBranch(repo, name, force: true) { store.setError(err2); return false }
+        }
+        store.setInfo("Deleted the local branch \(name).")
+        return true
+    }
+
+    func askClosePR(_ pr: PullRequest, deleteBranch: Bool) {
+        Task {
+            if deleteBranch, await store.protectedNames(repo).contains(pr.headRefName) {
+                notify("“\(pr.headRefName)” is protected", "The pull request can be closed, but its branch is a protected one and is never deleted from here."); return
+            }
+            let msg = deleteBranch
+                ? "GitHub cannot delete a pull request, so it is closed. The branch \(pr.headRefName) is also deleted, here and on the remote. If it is checked out here, git may keep the local copy."
+                : "GitHub cannot delete a pull request, so it is closed. You can reopen it on GitHub."
+            guard confirm("Close #\(pr.number) “\(pr.title)”?", msg, button: deleteBranch ? "Close and delete branch" : "Close") else { return }
+            if let err = await store.closePR(repo, pr.number, deleteBranch: deleteBranch) { store.setError(err) } else { store.setInfo("Closed #\(pr.number).") }
+        }
+    }
+
     func commitRow(_ c: CommitInfo) -> some View {
         VStack(alignment: .leading, spacing: 1) {
             Text(c.subject).lineLimit(2)
@@ -362,7 +443,8 @@ struct RepoDetail: View {
             Divider()
             commitBox
         }
-        .task { await store.refresh(repo, fetch: true) }
+        .task { await store.reload(repo, fetch: true) }
+        .onChange(of: store.revision[repo.id] ?? 0) { _, _ in Task { await reloadOpenFile() } }
         .onChange(of: store.focusRequest) { _, p in
             if let p { Task { await openFile(p) } }
         }
@@ -419,7 +501,7 @@ struct RepoDetail: View {
             }
             Spacer()
             if store.busy { ProgressView().controlSize(.small) }
-            Button { Task { await store.refresh(repo, fetch: true); await store.loadSide(repo); await loadDiff() } } label: { Label("Refresh", systemImage: "arrow.clockwise") }
+            Button { Task { await store.reload(repo, fetch: true) } } label: { Label("Refresh", systemImage: "arrow.clockwise") }
                 .disabled(store.busy).keyboardShortcut("r", modifiers: [.command, .shift])
                 .help("Fetch from the remote and update this repo's files, branches and pull requests")
             Button { Task { await store.pull(repo) } } label: { Label("Pull", systemImage: "arrow.down") }
@@ -663,6 +745,19 @@ struct RepoDetail: View {
         let (t, why) = await store.fileForEditing(repo, path)
         editBlock = why; editText = t ?? ""; editOriginal = t ?? ""
         if focus != nil { await loadDiff() }
+    }
+
+    /// After any reload: re-read the open file from disk (unless you have unsaved edits) and refresh its diff.
+    func reloadOpenFile() async {
+        guard let p = openPath else { return }
+        let wasDirty = dirty
+        focus = st.changes.first { $0.path == p }
+        if !wasDirty {
+            let (t, why) = await store.fileForEditing(repo, p)
+            if t == nil && !FileManager.default.fileExists(atPath: url(p).path) { closeFile(); return }
+            editBlock = why; editText = t ?? ""; editOriginal = t ?? ""
+        }
+        if focus != nil { await loadDiff() } else if mode == 0 { mode = 1 }
     }
 
     func closeFile() { openPath = nil; focus = nil; diffText = ""; editText = ""; editOriginal = ""; editBlock = nil }

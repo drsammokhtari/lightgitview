@@ -13,5 +13,10 @@
 - A leading slash anchors a pattern to the repo root; a trailing slash matches folders only [20].
 - `git clone <repository> <directory>` clones into a newly created directory and checks out the branch the remote points to; `--branch` picks another [23]. Source: https://git-scm.com/docs/git-clone
 - `git ls-files -z --cached --others --exclude-standard` lists tracked files and untracked files that are not ignored, ending each name with a NUL and not quoting it [26]. Source: https://git-scm.com/docs/git-ls-files
+- `git branch -d` deletes a branch only if it is fully merged in its upstream (or HEAD if it has none); `-D` is `--delete --force` [27]. Source: https://git-scm.com/docs/git-branch
+- `git push <remote> --delete <branch>` deletes the branch on the remote [2]. Source: https://git-scm.com/docs/git-push
+- `git merge --ff-only` resolves the merge as a fast-forward when possible and otherwise refuses with a non-zero status [28]. Source: https://git-scm.com/docs/git-merge
+- A fetch writes the refs it fetched to FETCH_HEAD by default, and `git pull` uses it; `--no-write-fetch-head` stops the write [29]. Source: https://git-scm.com/docs/git-fetch
+- The app pulls with `git fetch` then `git merge --ff-only @{upstream}`. Measured on 2026-11-26 (not from a source): two overlapping fetches plus `git pull --ff-only` gave "Cannot fast-forward to multiple branches" in 26 of 40 runs; the fetch-then-merge method with one job at a time gave 0 of 40.
 
 Effective date: the pages were read on 2026-11-25; no effective date is published for these behaviours. UNVERIFIED: the exact git version the user has installed.

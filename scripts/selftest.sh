@@ -18,4 +18,7 @@ echo "$out" | grep -q 'clone err=none listed=true inWorkspace=true duplicate=tru
 echo "$out" | grep -q 'tree top=docs/,src/,README.md src=a/,b.py' || { echo "FAIL tree"; exit 1; }
 echo "$out" | grep -q 'repotree .*src' || { echo "FAIL repo tree"; exit 1; }
 echo "$out" | grep -q 'edit read=true why=none missing=true save=ok added=12->13' || { echo "FAIL edit"; exit 1; }
+echo "$out" | grep -q 'branches protected=true unmerged=1 safeRefused=true force=ok local=ok remote=ok gone=true' || { echo "FAIL branch delete"; exit 1; }
+echo "$out" | grep -q 'reload tree=true status=true revision=1 timeout=124' || { echo "FAIL reload"; exit 1; }
+echo "$out" | grep -q 'pull errors=0 behind=0 banner=ok' || { echo "FAIL pull"; exit 1; }
 echo "selftest ok"

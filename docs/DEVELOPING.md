@@ -22,6 +22,9 @@ sh scripts/make-sample.sh ~/sample-workspace   # real sample repos to try the ap
 | Secret-looking file names | `Change.looksSecret` in `Git.swift` |
 | What the ignore menu offers (file, folder, extension) | `IgnoreScope` in `Git.swift`, `askIgnore` in `Views.swift` |
 | Right-click and "..." menus on changed files and folders | `fileMenu`, `dirMenu`, `rowActions` in `Views.swift` |
+| Pull, fetch and push (one job at a time per repo) | `Store.pull`, `Store.fetchRemote`, `Store.gated`, `RepoGate` in `Git.swift`; do not use `git pull` |
+| Keeping every panel current | `Store.reload` (status, then the panel and tree), `Store.revision`, `reloadOpenFile` in `Views.swift`; end every new action with `await reload(repo)` |
+| Deleting branches, closing pull requests from the panel | `Store.protectedNames`, `branchFacts`, `deleteLocalBranch`, `deleteRemoteBranch`, `askDeleteBranch`, `askClosePR` |
 | Editing a file (open, edit, save) | `Store.fileForEditing`, `Store.saveFile`, `openFile` and `saveEdit` in `Views.swift` |
 | File tree sidebar | `FileNode` and `TreeBuilder` in `Git.swift`, `Store.loadTree`, `FileTreePane` in `Views.swift` |
 | Clone repo | `Store.cloneRepo`, `CloneSource` in `Git.swift`, `CloneSheet` in `Views.swift` |

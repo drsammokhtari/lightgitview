@@ -12,9 +12,11 @@ private final class Box { var data = Data() }
 
 enum Git {
     /// Runs the system git. Nothing is bundled: the app is a thin window over `git`.
-    static func run(_ args: [String], in dir: URL) async -> GitResult { await exec("/usr/bin/git", args, in: dir) }
+    static func run(_ args: [String], in dir: URL, timeout: Double? = nil) async -> GitResult { await exec("/usr/bin/git", args, in: dir, timeout: timeout) }
 
-    static func exec(_ exe: String, _ args: [String], in dir: URL) async -> GitResult {
+    /// Runs a program. With `timeout`, a command that is still running after that many seconds is stopped (code 124),
+    /// so a stuck network call cannot freeze a refresh.
+    static func exec(_ exe: String, _ args: [String], in dir: URL, timeout: Double? = nil) async -> GitResult {
         await withCheckedContinuation { cont in
             DispatchQueue.global(qos: .userInitiated).async {
                 let p = Process()
@@ -33,12 +35,20 @@ enum Git {
                     cont.resume(returning: GitResult(code: 127, out: "", err: "Could not run git: \(error.localizedDescription)"))
                     return
                 }
+                let flag = Box()
+                if let t = timeout {
+                    DispatchQueue.global().asyncAfter(deadline: .now() + t) { if p.isRunning { flag.data = Data([1]); p.terminate() } }
+                }
                 let ob = Box(), eb = Box()
                 let g = DispatchGroup()
                 g.enter(); DispatchQueue.global().async { ob.data = o.fileHandleForReading.readDataToEndOfFile(); g.leave() }
                 g.enter(); DispatchQueue.global().async { eb.data = e.fileHandleForReading.readDataToEndOfFile(); g.leave() }
                 p.waitUntilExit()
                 g.wait()
+                if !flag.data.isEmpty {
+                    cont.resume(returning: GitResult(code: 124, out: "", err: "Timed out after \(Int(timeout ?? 0)) seconds."))
+                    return
+                }
                 cont.resume(returning: GitResult(code: p.terminationStatus,
                                                  out: String(decoding: ob.data, as: UTF8.self),
                                                  err: String(decoding: eb.data, as: UTF8.self)))
@@ -138,9 +148,13 @@ struct BranchInfo: Identifiable, Hashable {
     let isRemote: Bool
     let isCurrent: Bool
     let track: String       // e.g. "ahead 1, behind 2"
+    var remoteRef: String? = nil   // the matching branch on a remote, e.g. "origin/feature", when there is one
     var id: String { (isRemote ? "r:" : "l:") + name }
     /// The name to give `git switch`: a remote-only branch is created locally with its short name.
     var switchName: String { isRemote ? String(name.drop(while: { $0 != "/" }).dropFirst()) : name }
+    /// The branch's name as the remote knows it (without the remote prefix), and the remote's name.
+    var remoteBranch: String? { (isRemote ? name : remoteRef).map { String($0.drop(while: { $0 != "/" }).dropFirst()) } }
+    var remoteName: String? { (isRemote ? name : remoteRef).map { String($0.prefix(while: { $0 != "/" })) } }
 }
 
 struct CommitInfo: Identifiable, Hashable {
@@ -172,11 +186,18 @@ enum SideParser {
         var out: [BranchInfo] = []
         let rows = raw.split(separator: "\n").map { $0.split(separator: "\t", omittingEmptySubsequences: false).map(String.init) }
         for r in rows where r.count >= 4 && r[1].hasPrefix("refs/heads/") { locals.insert(r[2]) }
+        var remotes = Set<String>()
+        for r in rows where r.count >= 4 && r[1].hasPrefix("refs/remotes/") && !r[2].hasSuffix("/HEAD") { remotes.insert(r[2]) }
         for r in rows where r.count >= 4 {
             let isRemote = r[1].hasPrefix("refs/remotes/")
             if isRemote && (r[2].hasSuffix("/HEAD") || !r[2].contains("/")) { continue }
             if isRemote && locals.contains(String(r[2].drop(while: { $0 != "/" }).dropFirst())) { continue }
-            out.append(BranchInfo(name: r[2], isRemote: isRemote, isCurrent: r[0] == "*", track: r[3].trimmingCharacters(in: CharacterSet(charactersIn: "[]"))))
+            var ref: String? = nil
+            if !isRemote {
+                let up = r.count >= 5 ? r[4] : ""
+                if !up.isEmpty, remotes.contains(up) { ref = up } else if remotes.contains("origin/" + r[2]) { ref = "origin/" + r[2] }
+            }
+            out.append(BranchInfo(name: r[2], isRemote: isRemote, isCurrent: r[0] == "*", track: r[3].trimmingCharacters(in: CharacterSet(charactersIn: "[]")), remoteRef: ref))
         }
         return out.sorted { ($0.isCurrent ? 0 : ($0.isRemote ? 2 : 1), $0.name) < ($1.isCurrent ? 0 : ($1.isRemote ? 2 : 1), $1.name) }
     }
@@ -344,5 +365,21 @@ enum TreeBuilder {
             return out
         }
         return convert(root, "")
+    }
+}
+
+/// One git job at a time per repo for the commands that write refs (fetch, pull, push). Overlapping fetches used to
+/// leave FETCH_HEAD with several entries, and then `git pull --ff-only` failed with "Cannot fast-forward to multiple branches".
+actor RepoGate {
+    static let shared = RepoGate()
+    private var held = Set<String>()
+    private var waiters: [String: [CheckedContinuation<Void, Never>]] = [:]
+    func acquire(_ key: String) async {
+        if held.contains(key) { await withCheckedContinuation { waiters[key, default: []].append($0) } }
+        else { held.insert(key) }
+    }
+    func release(_ key: String) {
+        if var w = waiters[key], !w.isEmpty { let c = w.removeFirst(); waiters[key] = w; c.resume() }
+        else { held.remove(key); waiters[key] = nil }
     }
 }
