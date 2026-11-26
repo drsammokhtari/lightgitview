@@ -1,0 +1,7 @@
+# SAMPLE - fictional data, edit or replace before running
+diff --git a/index.html b/index.html
+@@ -3,5 +3,5 @@
+-five old lines
++five new lines
+diff --git a/old.css b/old.css
+deleted file mode 100644

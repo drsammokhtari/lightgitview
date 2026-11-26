@@ -298,18 +298,92 @@ final class Store: ObservableObject {
         if let e = errors.first { setError(e) } else { setInfo("Discarded \(cs.count) change\(cs.count == 1 ? "" : "s").") }
     }
 
-    /// Adds untracked paths to the repo's .gitignore so git stops listing them. Tracked files cannot be ignored this way.
-    func ignore(_ repo: Repo, _ paths: [String]) async {
+    /// Adds patterns to the repo's .gitignore. Paths git already tracks are only ignored once they are untracked,
+    /// so `untrack` lists paths to take out of the index (`git rm --cached`; the files stay on disk).
+    func ignore(_ repo: Repo, patterns: [String], untrack: [String] = []) async {
+        busy = true; defer { busy = false }
         let url = repo.url.appendingPathComponent(".gitignore")
         var text = (try? String(contentsOf: url, encoding: .utf8)) ?? ""
         let have = Set(text.split(separator: "\n").map(String.init))
-        let add = paths.filter { !have.contains("/" + $0) }
-        guard !add.isEmpty else { return }
-        if !text.isEmpty && !text.hasSuffix("\n") { text += "\n" }
-        text += add.map { "/" + $0 }.joined(separator: "\n") + "\n"
-        do { try text.write(to: url, atomically: true, encoding: .utf8); setInfo("Added \(add.count) path\(add.count == 1 ? "" : "s") to .gitignore.") }
-        catch { setError("Could not write .gitignore: \(error.localizedDescription)") }
+        let add = patterns.filter { !have.contains($0) }
+        if !add.isEmpty {
+            if !text.isEmpty && !text.hasSuffix("\n") { text += "\n" }
+            text += add.joined(separator: "\n") + "\n"
+            do { try text.write(to: url, atomically: true, encoding: .utf8) }
+            catch { setError("Could not write .gitignore: \(error.localizedDescription)"); return }
+        }
+        if !untrack.isEmpty {
+            let r = await Git.run(["rm", "--cached", "-r", "-q", "--ignore-unmatch", "--"] + untrack, in: repo.url)
+            if !r.ok { setError(r.text); await refresh(repo); return }
+        }
+        setInfo(add.isEmpty ? "Already in .gitignore." : "Added \(add.joined(separator: ", ")) to .gitignore.")
         await refresh(repo)
+    }
+
+    /// Tracked files an ignore choice would have to untrack: the file, the whole folder, or every file with that extension.
+    func trackedFor(_ repo: Repo, _ c: Change, _ scope: IgnoreScope) async -> [String] {
+        guard !c.untracked else { return [] }
+        switch scope {
+        case .file: return [c.path]
+        case .folder:
+            let d = (c.path as NSString).deletingLastPathComponent
+            return d.isEmpty ? [] : [d]
+        case .ext:
+            let e = (c.path as NSString).pathExtension
+            let r = await Git.run(["ls-files", "--", ":(glob)**/*." + e, "*." + e], in: repo.url)
+            return r.out.split(separator: "\n").map(String.init)
+        }
+    }
+
+    /// Moves a repo's folder to the Trash and forgets it everywhere. The remote copy is not touched.
+    func deleteRepo(_ repo: Repo) async {
+        busy = true; defer { busy = false }
+        do { try FileManager.default.trashItem(at: repo.url, resultingItemURL: nil) }
+        catch { setError("Could not move \(repo.name) to the Trash: \(error.localizedDescription)"); return }
+        extraRepos.removeAll { $0 == repo.id }
+        for i in workspaces.indices { workspaces[i].repos.removeAll { $0 == repo.id } }
+        statuses[repo.id] = nil; side[repo.id] = nil; ticked[repo.id] = nil; messages[repo.id] = nil
+        allRepos.removeAll { $0.id == repo.id }
+        fixSelection()
+        setInfo("Moved \(repo.name) to the Trash.")
+    }
+
+    // MARK: pull requests (GitHub CLI)
+    var ghPath: String? { ["/opt/homebrew/bin/gh", "/usr/local/bin/gh"].first { FileManager.default.isExecutableFile(atPath: $0) } }
+
+    func loadPR(_ repo: Repo, _ number: Int) async -> (PRDetail?, [String: String], String?) {
+        guard let gh = ghPath else { return (nil, [:], "The GitHub CLI (gh) is not installed.") }
+        let v = await Git.exec(gh, ["pr", "view", String(number), "--json", PRDetail.fields], in: repo.url)
+        guard v.ok, let d = try? JSONDecoder().decode(PRDetail.self, from: Data(v.out.utf8)) else { return (nil, [:], v.ok ? "Could not read the pull request." : v.text) }
+        let df = await Git.exec(gh, ["pr", "diff", String(number), "--color", "never"], in: repo.url)
+        return (d, df.ok ? PRParser.splitDiff(df.out) : [:], df.ok ? nil : df.text)
+    }
+
+    enum Review { case approve, requestChanges, comment }
+    /// Posts a comment or a review. Returns the error text, or nil on success.
+    func review(_ repo: Repo, _ number: Int, _ kind: Review, _ body: String) async -> String? {
+        guard let gh = ghPath else { return "The GitHub CLI (gh) is not installed." }
+        var args = ["pr", "review", String(number)]
+        switch kind {
+        case .approve: args.append("--approve")
+        case .requestChanges: args.append("--request-changes")
+        case .comment: args.append("--comment")
+        }
+        if !body.isEmpty { args += ["--body", body] }
+        let r = await Git.exec(gh, args, in: repo.url)
+        return r.ok ? nil : r.text
+    }
+    func comment(_ repo: Repo, _ number: Int, _ body: String) async -> String? {
+        guard let gh = ghPath else { return "The GitHub CLI (gh) is not installed." }
+        let r = await Git.exec(gh, ["pr", "comment", String(number), "--body", body], in: repo.url)
+        return r.ok ? nil : r.text
+    }
+    /// GitHub has no way to delete a pull request, so this closes it (and can delete its branch).
+    func closePR(_ repo: Repo, _ number: Int, deleteBranch: Bool) async -> String? {
+        guard let gh = ghPath else { return "The GitHub CLI (gh) is not installed." }
+        let r = await Git.exec(gh, ["pr", "close", String(number)] + (deleteBranch ? ["--delete-branch"] : []), in: repo.url)
+        await loadSide(repo)
+        return r.ok ? nil : r.text
     }
 
     private func lastLine(_ s: String) -> String { s.split(separator: "\n").last.map(String.init) ?? s }

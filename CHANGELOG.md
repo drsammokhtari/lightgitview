@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.1 · 2026-11-26
+- Ignore from the changes list: add a file, its folder, or all files with its extension to `.gitignore`. For a file git already tracks the app asks, then stops tracking it (the file stays on disk).
+- Right-click a repo, **Delete repo from disk**: moves the folder to the Trash after a confirmation that names uncommitted changes and unpushed commits.
+- Pull requests: open one from the side panel to read its changed files and diff and its conversation; comment, approve, request changes or close it (with an option to delete its branch). Uses the GitHub CLI.
+- `sh scripts/selftest.sh` now also checks the ignore patterns and the pull request parsing.
+
 ## v1.0 · 2026-11-25
 - First release.
 - Browse a folder of git repos and see each one's branch, changes, and commits to push or pull.

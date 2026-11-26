@@ -8,5 +8,8 @@
 - A commit takes its message with `-m <msg>` [4]. Source: https://git-scm.com/docs/git-commit
 - Credentials come from a git credential helper; on macOS `git-credential-osxkeychain` stores them [6]. Source: https://git-scm.com/docs/gitcredentials
 - A folder is a repo when `git rev-parse --is-inside-work-tree` prints `true` [7]. Source: https://git-scm.com/docs/git-rev-parse
+- A .gitignore does not affect files git already tracks [20]. Source: https://git-scm.com/docs/gitignore
+- `git rm --cached` removes a file from the index and keeps it on disk [21]. Source: https://git-scm.com/docs/git-rm
+- A leading slash anchors a pattern to the repo root; a trailing slash matches folders only [20].
 
 Effective date: the pages were read on 2026-11-25; no effective date is published for these behaviours. UNVERIFIED: the exact git version the user has installed.

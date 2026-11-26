@@ -4,7 +4,7 @@
 
 **Every repo, one light window.** A small Mac app that shows all your git repos in one place, with what changed in each, and lets you commit, pull and push without opening a terminal.
 
-![version](https://img.shields.io/badge/version-1.0-0F766E) ![platform](https://img.shields.io/badge/macOS-14%2B-0F766E) ![licence](https://img.shields.io/badge/licence-MIT-0F766E)
+![version](https://img.shields.io/badge/version-1.1-0F766E) ![platform](https://img.shields.io/badge/macOS-14%2B-0F766E) ![licence](https://img.shields.io/badge/licence-MIT-0F766E)
 
 <p align="center"><img src="docs/screenshot.png" width="900" alt="LightGitView showing a repo's changed files as a folder tree, a commit message ready, and the side panel with branches and commits to push"></p>
 
@@ -33,9 +33,10 @@ A 2-minute tour, with captions: install, first launch, the repo list, commit, pu
 - Pick a folder and see every git repo in it, with its branch and how many changes, commits to push and commits to pull.
 - Open a repo to see its changed files as a folder tree. Tick the files you want, write a message, commit.
 - Pull, push and refresh from the app. Pull is fast-forward only, and push waits while you are behind.
-- Discard or ignore a file or a whole folder. Discarded new files go to the Trash, so you can get them back.
+- Discard a file or a whole folder (discarded new files go to the Trash, so you can get them back), or add it to `.gitignore`: this file, its folder, or every file with its extension.
+- Right-click a repo and choose **Delete repo from disk**. The folder goes to the Trash, and the confirmation says how many uncommitted changes and unpushed commits it holds.
 - Group repos into workspaces, or look at all of them at once.
-- A side panel lists branches, commits you do not have yet, and open pull requests.
+- A side panel lists branches, commits you do not have yet, and open pull requests. Open a pull request to read its files and diff and its conversation, then comment, approve, request changes or close it (needs the GitHub CLI).
 - It warns before you commit a file that looks like a secret, such as `.env`.
 
 It is one small app (about a 1.3 MB download) that runs your own `git`. No account, no sign-in and no network use of its own.
@@ -73,7 +74,7 @@ open dist/LightGitView.app
 
 LightGitView is signed ad hoc and is not notarized by Apple, so macOS may say it cannot verify the developer when you open the downloaded zip. Right-click the app, choose **Open**, then **Open** again. You only do this once. The Homebrew install clears that flag for you.
 
-The side panel's pull request list uses the GitHub CLI (`gh`) when it is installed and signed in. The rest of the app needs only `git`.
+The pull request list and review use the GitHub CLI (`gh`) when it is installed and signed in. The rest of the app needs only `git`.
 
 ## Quick start
 

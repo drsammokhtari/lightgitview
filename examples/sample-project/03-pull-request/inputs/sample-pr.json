@@ -1,0 +1,39 @@
+{
+  "_sample": "SAMPLE - fictional data, edit or replace before running",
+  "number": 7,
+  "title": "Add health check",
+  "body": "Sample description.",
+  "state": "OPEN",
+  "url": "https://example.com/sample/pull/7",
+  "headRefName": "feat/health",
+  "baseRefName": "main",
+  "isDraft": false,
+  "author": {
+    "login": "sam"
+  },
+  "additions": 14,
+  "deletions": 3,
+  "files": [
+    {
+      "path": "src/api.py",
+      "additions": 12,
+      "deletions": 3
+    },
+    {
+      "path": "README.md",
+      "additions": 2,
+      "deletions": 0
+    }
+  ],
+  "comments": [
+    {
+      "author": {
+        "login": "sam"
+      },
+      "body": "Please add a test for /health.",
+      "createdAt": "2026-11-26T01:00:00Z"
+    }
+  ],
+  "reviews": [],
+  "reviewDecision": ""
+}

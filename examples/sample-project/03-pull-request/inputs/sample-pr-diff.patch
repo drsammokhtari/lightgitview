@@ -1,0 +1,11 @@
+# SAMPLE - fictional data, edit or replace before running
+diff --git a/src/api.py b/src/api.py
+@@ -10,3 +10,12 @@
+-old line one
+-old line two
+-old line three
++new line (12 added lines in the full patch)
+diff --git a/README.md b/README.md
+@@ -1,0 +1,2 @@
++Run with `python -m api`.
++Set API_URL first.

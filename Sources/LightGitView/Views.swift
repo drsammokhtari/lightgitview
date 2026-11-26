@@ -118,6 +118,22 @@ struct Sidebar: View {
         if let w = store.currentWorkspace, store.isIn(r, w) {
             Button("Remove from “\(w.name)”") { store.toggleMember(r, w) }
         }
+        Divider()
+        Button("Delete repo from disk…", role: .destructive) { askDeleteRepo(r) }
+    }
+
+    func askDeleteRepo(_ r: Repo) {
+        let st = store.statuses[r.id]
+        var risk = ""
+        if let st {
+            var parts: [String] = []
+            if !st.changes.isEmpty { parts.append("\(st.changes.count) uncommitted change\(st.changes.count == 1 ? "" : "s")") }
+            if st.ahead > 0 { parts.append("\(st.ahead) commit\(st.ahead == 1 ? "" : "s") not pushed") }
+            if !parts.isEmpty { risk = "\n\nThis repo has " + parts.joined(separator: " and ") + " that exist only on this Mac." }
+        }
+        if confirm("Move “\(r.name)” to the Trash?", "The folder \(r.url.path) is moved to the Trash, so you can still put it back. The copy on the remote is not touched." + risk, button: "Move to Trash") {
+            Task { await store.deleteRepo(r) }
+        }
     }
 }
 
@@ -216,6 +232,7 @@ struct SidebarRow: View {
 struct SidePanel: View {
     @EnvironmentObject var store: Store
     let repo: Repo
+    @State private var reviewing: PullRequest?
     var info: SideInfo { store.side[repo.id] ?? SideInfo() }
     var st: RepoStatus { store.statuses[repo.id] ?? RepoStatus() }
     var body: some View {
@@ -254,6 +271,7 @@ struct SidePanel: View {
                         Text("#\(pr.number) \(pr.title)").lineLimit(2)
                         Text("\(pr.headRefName) · \(pr.author.login)\(pr.isDraft ? " · draft" : "")").font(.caption).foregroundStyle(.secondary).lineLimit(1)
                         HStack {
+                            Button("Review…") { reviewing = pr }
                             Button("Open") { if let u = URL(string: pr.url) { NSWorkspace.shared.open(u) } }
                             Button("Check out") { Task { await store.checkoutPR(repo, pr) } }.disabled(store.busy)
                         }.controlSize(.small)
@@ -263,6 +281,7 @@ struct SidePanel: View {
         }
         .font(.callout)
         .task { await store.loadSide(repo) }
+        .sheet(item: $reviewing) { pr in PRSheet(repo: repo, number: pr.number).environmentObject(store) }
     }
     func commitRow(_ c: CommitInfo) -> some View {
         VStack(alignment: .leading, spacing: 1) {
@@ -394,16 +413,44 @@ struct RepoDetail: View {
     }
     func dirOf(_ r: Row) -> String { String(r.id.dropFirst(4)) }
 
-    /// Discard (trash) and Ignore buttons for a file row or a folder row. Ignore only applies to untracked paths.
+    /// Ignore menu and Discard button for a file row, or Ignore and Discard for a folder row.
     func rowActions(_ files: [String], _ cs: [Change], dir: String? = nil) -> some View {
         HStack(spacing: 6) {
-            if !cs.isEmpty && cs.allSatisfy({ $0.untracked }) {
-                Button { Task { await store.ignore(repo, dir.map { [$0 + "/"] } ?? files) } } label: { Image(systemName: "eye.slash").frame(width: 22, height: 22).contentShape(Rectangle()) }
+            if let dir {
+                Button { askIgnoreFolder(dir, cs) } label: { Image(systemName: "eye.slash").frame(width: 22, height: 22).contentShape(Rectangle()) }
+                    .help("Ignore this folder: add it to .gitignore").accessibilityLabel("Ignore folder")
+            } else if let c = cs.first {
+                Menu { ignoreMenu(c) } label: { Image(systemName: "eye.slash").frame(width: 22, height: 22).contentShape(Rectangle()) }
+                    .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
                     .help("Ignore: add to .gitignore").accessibilityLabel("Ignore")
             }
             Button { askDiscard(cs) } label: { Image(systemName: "trash").frame(width: 22, height: 22).contentShape(Rectangle()) }
                 .help("Discard: remove this change").accessibilityLabel("Discard")
         }.buttonStyle(.borderless).foregroundStyle(.secondary)
+    }
+
+    @ViewBuilder func ignoreMenu(_ c: Change) -> some View {
+        ForEach(IgnoreScope.allCases, id: \.self) { scope in
+            if let label = scope.label(for: c.path) { Button(label) { askIgnore(c, scope) } }
+        }
+    }
+
+    /// Adds the chosen pattern to .gitignore. A file git already tracks must also leave the index, which needs a yes.
+    func askIgnore(_ c: Change, _ scope: IgnoreScope) {
+        guard let pat = scope.pattern(for: c.path) else { return }
+        Task {
+            let tracked = await store.trackedFor(repo, c, scope)
+            if !tracked.isEmpty {
+                let what = tracked.count == 1 ? tracked[0] : "\(tracked.count) files"
+                guard confirm("Stop tracking \(what) and ignore it?", "\(pat) is added to .gitignore and the file is taken out of git's index. It stays on your disk. Commit the removal to take it out of the repo.", button: "Ignore and stop tracking") else { return }
+            }
+            await store.ignore(repo, patterns: [pat], untrack: tracked)
+        }
+    }
+    func askIgnoreFolder(_ dir: String, _ cs: [Change]) {
+        let hasTracked = cs.contains { !$0.untracked }
+        if hasTracked && !confirm("Stop tracking files in \(dir)/ and ignore the folder?", "/\(dir)/ is added to .gitignore and the tracked files inside are taken out of git's index. They stay on your disk. Commit the removal to take them out of the repo.", button: "Ignore and stop tracking") { return }
+        Task { await store.ignore(repo, patterns: ["/" + dir + "/"], untrack: hasTracked ? [dir] : []) }
     }
 
     func askDiscard(_ cs: [Change]) {
@@ -442,7 +489,8 @@ struct RepoDetail: View {
                             .font(.callout).padding(.leading, CGFloat(r.depth) * 16).tag(c.id)
                             .contextMenu {
                                 Button("Discard…", role: .destructive) { askDiscard([c]) }
-                                if c.untracked { Button("Ignore (add to .gitignore)") { Task { await store.ignore(repo, [c.path]) } } }
+                                Divider()
+                                ignoreMenu(c)
                             }
                         } else {
                             let on = r.files.filter { ticked.contains($0) }.count
@@ -475,16 +523,7 @@ struct RepoDetail: View {
         Group {
             if focus == nil { Text("Select a file to see its changes").foregroundStyle(.secondary).frame(maxWidth: .infinity, maxHeight: .infinity) }
             else {
-                ScrollView([.vertical, .horizontal]) {
-                    VStack(alignment: .leading, spacing: 0) {
-                        ForEach(Array(diffText.split(separator: "\n", omittingEmptySubsequences: false).enumerated()), id: \.offset) { _, l in
-                            Text(l.isEmpty ? " " : String(l))
-                                .font(.system(size: 12, design: .monospaced))
-                                .foregroundStyle(l.hasPrefix("+") && !l.hasPrefix("+++") ? Color.green : (l.hasPrefix("-") && !l.hasPrefix("---") ? Color.red : (l.hasPrefix("@@") ? Color.brand : Color.primary)))
-                                .textSelection(.enabled)
-                        }
-                    }.padding(12).frame(maxWidth: .infinity, alignment: .leading)
-                }
+                DiffView(text: diffText)
             }
         }
     }
@@ -514,5 +553,180 @@ struct RepoDetail: View {
     func loadDiff() async {
         guard let c = focus else { return }
         diffText = await store.diff(repo, c)
+    }
+}
+
+
+/// A patch drawn line by line: additions green, deletions red, hunk headers in the accent colour.
+struct DiffView: View {
+    let text: String
+    var body: some View {
+        ScrollView([.vertical, .horizontal]) {
+            VStack(alignment: .leading, spacing: 0) {
+                ForEach(Array(text.split(separator: "\n", omittingEmptySubsequences: false).enumerated()), id: \.offset) { _, l in
+                    Text(l.isEmpty ? " " : String(l))
+                        .font(.system(size: 12, design: .monospaced))
+                        .foregroundStyle(l.hasPrefix("+") && !l.hasPrefix("+++") ? Color.green : (l.hasPrefix("-") && !l.hasPrefix("---") ? Color.red : (l.hasPrefix("@@") ? Color.brand : Color.primary)))
+                        .textSelection(.enabled)
+                }
+            }.padding(12).frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+}
+
+/// Open a pull request: read its files and diff and its conversation, then comment, approve, request changes or close it.
+struct PRSheet: View {
+    @EnvironmentObject var store: Store
+    @Environment(\.dismiss) var dismiss
+    let repo: Repo
+    let number: Int
+    @State private var pr: PRDetail?
+    @State private var diffs: [String: String] = [:]
+    @State private var loadError: String?
+    @State private var tab = 0
+    @State private var file: String?
+    @State private var text = ""
+    @State private var working = false
+    @State private var result: Banner?
+
+    var body: some View {
+        VStack(spacing: 0) {
+            header
+            Divider()
+            if let pr {
+                Picker("", selection: $tab) {
+                    Text("Files changed (\(pr.files.count))").tag(0)
+                    Text("Conversation (\(pr.comments.count + pr.reviews.count))").tag(1)
+                }.pickerStyle(.segmented).labelsHidden().padding(10)
+                Divider()
+                if tab == 0 { filesTab(pr) } else { conversationTab(pr) }
+                Divider()
+                actionBar(pr)
+            } else {
+                VStack(spacing: 8) {
+                    if let e = loadError { Text("Could not load this pull request").font(.headline); Text(e).foregroundStyle(.secondary).textSelection(.enabled) }
+                    else { ProgressView(); Text("Loading pull request…").foregroundStyle(.secondary) }
+                }.frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        }
+        .frame(minWidth: 940, minHeight: 640)
+        .task { await load() }
+    }
+
+    func load() async {
+        let (d, df, err) = await store.loadPR(repo, number)
+        pr = d; diffs = df; loadError = d == nil ? err : nil
+        if file == nil { file = d?.files.first?.path }
+    }
+
+    var header: some View {
+        HStack(alignment: .top, spacing: 12) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(pr.map { "#\($0.number) \($0.title)" } ?? "Pull request #\(number)").font(.title3.weight(.semibold)).lineLimit(2)
+                if let pr {
+                    HStack(spacing: 8) {
+                        Text(pr.state + (pr.isDraft ? " · draft" : "")).fontWeight(.semibold).foregroundStyle(pr.isOpen ? Color.green : Color.secondary)
+                        Text("\(pr.author?.login ?? "unknown") wants to merge \(pr.headRefName) into \(pr.baseRefName)").foregroundStyle(.secondary)
+                        Text("+\(pr.additions)").foregroundStyle(.green); Text("−\(pr.deletions)").foregroundStyle(.red)
+                        if let d = pr.reviewDecision, !d.isEmpty { Text(d.replacingOccurrences(of: "_", with: " ").lowercased()).padding(.horizontal, 6).background(Capsule().fill(Color.brand.opacity(0.15))) }
+                    }.font(.callout)
+                }
+            }
+            Spacer()
+            Button("Done") { dismiss() }.keyboardShortcut(.cancelAction)
+        }.padding(16)
+    }
+
+    func filesTab(_ pr: PRDetail) -> some View {
+        HSplitView {
+            List(pr.files, selection: $file) { f in
+                HStack {
+                    Text(f.path).lineLimit(1).truncationMode(.middle)
+                    Spacer()
+                    Text("+\(f.additions)").foregroundStyle(.green); Text("−\(f.deletions)").foregroundStyle(.red)
+                }.font(.callout).tag(f.path)
+            }.frame(minWidth: 260, idealWidth: 320)
+            Group {
+                if let f = file, let d = diffs[f] { DiffView(text: d) }
+                else { Text(diffs.isEmpty ? "No diff available" : "Select a file to see its changes").foregroundStyle(.secondary).frame(maxWidth: .infinity, maxHeight: .infinity) }
+            }.frame(minWidth: 320)
+        }
+    }
+
+    func conversationTab(_ pr: PRDetail) -> some View {
+        struct Item: Identifiable { let id: String; let who: String; let when: String; let kind: String; let body: String }
+        var items = pr.comments.map { Item(id: "c" + $0.id, who: $0.author?.login ?? "unknown", when: $0.createdAt ?? "", kind: "commented", body: $0.body) }
+        items += pr.reviews.map { Item(id: "r" + $0.id, who: $0.author?.login ?? "unknown", when: $0.submittedAt ?? "", kind: $0.state.replacingOccurrences(of: "_", with: " ").lowercased(), body: $0.body) }
+        items.sort { $0.when < $1.when }
+        return ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                Text(pr.body.isEmpty ? "No description." : pr.body).textSelection(.enabled).foregroundStyle(pr.body.isEmpty ? .secondary : .primary)
+                Divider()
+                if items.isEmpty { Text("No comments or reviews yet.").foregroundStyle(.secondary) }
+                ForEach(items) { i in
+                    VStack(alignment: .leading, spacing: 3) {
+                        HStack { Text(i.who).fontWeight(.semibold); Text(i.kind).foregroundStyle(.secondary); Spacer(); Text(String(i.when.prefix(10))).font(.caption).foregroundStyle(.secondary) }
+                        if !i.body.isEmpty { Text(i.body).textSelection(.enabled) }
+                    }
+                }
+            }.padding(16).frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    func actionBar(_ pr: PRDetail) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if let r = result {
+                HStack(alignment: .top) {
+                    Image(systemName: r.isError ? "xmark.octagon.fill" : "checkmark.circle.fill").foregroundStyle(r.isError ? Color.red : Color.green)
+                    Text(r.text).textSelection(.enabled).font(.callout)
+                }
+            }
+            if pr.isOpen {
+                TextField("Write a comment or review message", text: $text, axis: .vertical).lineLimit(1...4).textFieldStyle(.roundedBorder)
+                HStack {
+                    Button("Comment") { run("Comment posted.", reload: true) { await store.comment(repo, number, text.trimmingCharacters(in: .whitespacesAndNewlines)) } }
+                        .disabled(blank || working)
+                    Button("Approve") {
+                        if confirm("Approve #\(number)?", "Your approval is posted on GitHub for everyone to see.", button: "Approve") {
+                            run("Approved.", reload: true) { await store.review(repo, number, .approve, text.trimmingCharacters(in: .whitespacesAndNewlines)) }
+                        }
+                    }.buttonStyle(.borderedProminent).disabled(working)
+                    Button("Request changes") {
+                        if confirm("Request changes on #\(number)?", "Your message is posted on GitHub as a review.", button: "Request changes") {
+                            run("Changes requested.", reload: true) { await store.review(repo, number, .requestChanges, text.trimmingCharacters(in: .whitespacesAndNewlines)) }
+                        }
+                    }.disabled(blank || working).help(blank ? "Write what should change first" : "Request changes")
+                    Spacer()
+                    Menu("Close…") {
+                        Button("Close pull request") { askClose(deleteBranch: false) }
+                        Button("Close and delete its branch", role: .destructive) { askClose(deleteBranch: true) }
+                    }.menuStyle(.borderlessButton).fixedSize().disabled(working)
+                    Button("Open on GitHub") { if let u = URL(string: pr.url) { NSWorkspace.shared.open(u) } }
+                    if working { ProgressView().controlSize(.small) }
+                }
+            } else {
+                HStack { Text("This pull request is \(pr.state.lowercased()). No further review actions."); Spacer(); Button("Open on GitHub") { if let u = URL(string: pr.url) { NSWorkspace.shared.open(u) } } }
+            }
+        }.padding(16)
+    }
+
+    var blank: Bool { text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+
+    func askClose(deleteBranch: Bool) {
+        let msg = deleteBranch
+            ? "GitHub cannot delete a pull request, so it is closed. The branch \(pr?.headRefName ?? "") is also deleted, here and on the remote."
+            : "GitHub cannot delete a pull request, so it is closed. You can reopen it on GitHub."
+        guard confirm("Close #\(number)?", msg, button: deleteBranch ? "Close and delete branch" : "Close") else { return }
+        run("Closed.", reload: true) { await store.closePR(repo, number, deleteBranch: deleteBranch) }
+    }
+
+    func run(_ ok: String, reload: Bool, _ job: @escaping () async -> String?) {
+        working = true
+        Task {
+            let err = await job()
+            working = false
+            if let err { result = Banner(text: err, isError: true) }
+            else { result = Banner(text: ok, isError: false); text = ""; if reload { await load() } }
+        }
     }
 }

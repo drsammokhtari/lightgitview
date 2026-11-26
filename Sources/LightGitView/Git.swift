@@ -187,3 +187,89 @@ enum SideParser {
         }
     }
 }
+
+struct PRFile: Decodable, Hashable, Identifiable {
+    let path: String
+    let additions: Int
+    let deletions: Int
+    var id: String { path }
+}
+struct PRPerson: Decodable, Hashable { let login: String }
+struct PRComment: Decodable, Hashable, Identifiable {
+    let author: PRPerson?
+    let body: String
+    let createdAt: String?
+    var id: String { (createdAt ?? "") + body }
+}
+struct PRReview: Decodable, Hashable, Identifiable {
+    let author: PRPerson?
+    let state: String
+    let body: String
+    let submittedAt: String?
+    var id: String { (submittedAt ?? "") + state + body }
+}
+struct PRDetail: Decodable {
+    let number: Int
+    let title: String
+    let body: String
+    let state: String
+    let url: String
+    let headRefName: String
+    let baseRefName: String
+    let isDraft: Bool
+    let author: PRPerson?
+    let additions: Int
+    let deletions: Int
+    let files: [PRFile]
+    let comments: [PRComment]
+    let reviews: [PRReview]
+    let reviewDecision: String?
+    var isOpen: Bool { state == "OPEN" }
+    static let fields = "number,title,body,state,url,headRefName,baseRefName,isDraft,author,additions,deletions,files,comments,reviews,reviewDecision"
+}
+
+enum PRParser {
+    /// Splits `gh pr diff` output into one patch per file, keyed by the new path.
+    static func splitDiff(_ raw: String) -> [String: String] {
+        var out: [String: String] = [:]
+        var key: String?
+        var buf: [Substring] = []
+        func flush() { if let k = key { out[k] = buf.joined(separator: "\n") } }
+        for line in raw.split(separator: "\n", omittingEmptySubsequences: false) {
+            if line.hasPrefix("diff --git ") {
+                flush(); buf = []
+                if let r = line.range(of: " b/", options: .backwards) { key = String(line[r.upperBound...]) } else { key = nil }
+            }
+            buf.append(line)
+        }
+        flush()
+        return out
+    }
+}
+
+/// How the ignore menu words a pattern for a change. nil means the option does not apply (no folder, no extension).
+enum IgnoreScope: CaseIterable {
+    case file, folder, ext
+    func pattern(for path: String) -> String? {
+        let isDir = path.hasSuffix("/")
+        let clean = isDir ? String(path.dropLast()) : path
+        let ns = clean as NSString
+        switch self {
+        case .file: return "/" + clean + (isDir ? "/" : "")
+        case .folder:
+            let d = ns.deletingLastPathComponent
+            return d.isEmpty ? nil : "/" + d + "/"
+        case .ext:
+            let e = ns.pathExtension
+            return (e.isEmpty || isDir) ? nil : "*." + e
+        }
+    }
+    func label(for path: String) -> String? {
+        guard let p = pattern(for: path) else { return nil }
+        switch self {
+        case .file: return "Ignore this file"
+        case .folder: return "Ignore the folder " + String(p.dropFirst())
+        case .ext: return "Ignore all " + p + " files"
+        }
+    }
+}

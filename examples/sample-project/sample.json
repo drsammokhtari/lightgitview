@@ -7,6 +7,10 @@
     "02-repo": [
       "alpha-api",
       "beta-site"
+    ],
+    "03-pull-request": [
+      "#7 Add health check",
+      "#9 Refresh homepage"
     ]
   }
 }

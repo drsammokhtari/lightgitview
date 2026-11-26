@@ -1,0 +1,31 @@
+{
+  "_sample": "SAMPLE - fictional data, edit or replace before running",
+  "number": 9,
+  "title": "Refresh homepage",
+  "body": "Sample description.",
+  "state": "OPEN",
+  "url": "https://example.com/sample/pull/9",
+  "headRefName": "feat/home",
+  "baseRefName": "dev",
+  "isDraft": false,
+  "author": {
+    "login": "sam"
+  },
+  "additions": 5,
+  "deletions": 45,
+  "files": [
+    {
+      "path": "index.html",
+      "additions": 5,
+      "deletions": 5
+    },
+    {
+      "path": "old.css",
+      "additions": 0,
+      "deletions": 40
+    }
+  ],
+  "comments": [],
+  "reviews": [],
+  "reviewDecision": ""
+}
