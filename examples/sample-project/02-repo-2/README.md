@@ -13,6 +13,7 @@ Shows one repo's status and changes, then commits, pulls and pushes it.
 - [ ] The repo's working folder: a git repo on disk, from your workspace, sample: `inputs/sample-git-status.txt`
 - [ ] Changes to review: the diff of the working tree, produced by git, sample: `inputs/sample-diff.patch`
 - [ ] Commit message: one line you type in the app, sample: `inputs/sample-commit-message.md`
+- [ ] A click on a file in the file tree or the changes list, and edits you type in it (optional): no sample file
 - [ ] An ignore choice (optional): a click on a changed file or folder (this file, its folder, or all files with its extension), sample: `inputs/sample-ignore.md`
 
 ## Expect out
@@ -31,6 +32,8 @@ Signs: Jordan, after reading the diff and the message.
 - [ ] No file that looks like a secret (`.env`) is in the commit
 - [ ] The commit message is not empty
 - [ ] After Push, ahead is 0 and the push result is saved; Pull showed behind 0 first
+- [ ] A saved edit shows in `changes.csv` with updated counts, and switching files with unsaved edits asked first
+- [ ] The file tree lists every tracked file and every untracked file that is not ignored, and each changed file carries its status letter
 - [ ] Every row of `ignored.csv` is in `.gitignore`, and every file listed as untracked there is still on disk
 
 ## How the app does it
@@ -42,7 +45,8 @@ Signs: Jordan, after reading the diff and the message.
 5. Warn on paths matching the house rule for secrets. Done when each flagged path is shown.
 6. On your Commit click with a non-empty message, run `git add` for ticked files then `git commit -m`. Write `working/commit.md`. Done when the commit exists.
 7. On your Pull click run `git pull --ff-only`; on your Push click run `git push`. Done when ahead/behind are re-read.
-8. On your Ignore click write the pattern to `.gitignore`; for a tracked file ask first, then run `git rm --cached` so the file stays on disk. Add a row to `working/ignored.csv`. Done when the file no longer shows in the list as untracked.
+8. On opening the repo, run `git ls-files -z --cached --others --exclude-standard` and build the folder tree, folders first. Mark changed files with their status letter and folders that hold changes with a dot. On a click open the file: a changed file shows its diff with an Edit tab, an unchanged file opens in the editor (text files up to 1 MB). On Save write the file, then re-read status and the tree. Done when every listed path is in the tree and a saved edit shows in `changes.csv`.
+9. On your Ignore click write the pattern to `.gitignore`; for a tracked file ask first, then run `git rm --cached` so the file stays on disk. Add a row to `working/ignored.csv`. Done when the file no longer shows in the list as untracked.
 
 ## Tool
 
@@ -51,5 +55,5 @@ System git (free). See the PRD's Tools section.
 ## Rules
 
 - `rules/git-behaviour.md`: status, pull, push, commit [1][2][3][4].
-- `rules/git-behaviour.md`: .gitignore does not affect tracked files [20]; `git rm --cached` keeps the file [21].
+- `rules/git-behaviour.md`: `git ls-files` lists tracked and not-ignored untracked files [26]; .gitignore does not affect tracked files [20]; `git rm --cached` keeps the file [21].
 - `rules/house-rules.md`: message required; secret warning; every public act asks first.

@@ -29,9 +29,16 @@ final class Store: ObservableObject {
     @Published var ticked: [String: Set<String>] = [:]
     @Published var banner: Banner?
     @Published var side: [String: SideInfo] = [:]
+    @Published var showClone = false
+    @Published var focusRequest: String?   // a file the tree asks the repo page to show
+    @Published var trees: [String: [FileNode]] = [:]
+    @Published var treeTruncated: Set<String> = []
     @Published var busy = false
     @Published var scanning = false
     private var seen: [String: Set<String>] = [:]
+
+    /// Set only by the headless self-test: use a throw-away folder and never write the saved settings.
+    static var captureRoot: String?
 
     init() {
         let d = UserDefaults.standard
@@ -41,9 +48,11 @@ final class Store: ObservableObject {
         extraRepos = d.stringArray(forKey: "extraRepos") ?? []
         workspaces = (d.data(forKey: "workspaces").flatMap { try? JSONDecoder().decode([Workspace].self, from: $0) }) ?? []
         current = d.string(forKey: "current")
+        if let c = Store.captureRoot { roots = [c]; extraRepos = []; workspaces = []; current = nil }
     }
 
     private func save() {
+        if Store.captureRoot != nil { return }
         let d = UserDefaults.standard
         d.set(roots, forKey: "roots"); d.set(extraRepos, forKey: "extraRepos"); d.set(current, forKey: "current")
         d.set(try? JSONEncoder().encode(workspaces), forKey: "workspaces")
@@ -367,6 +376,99 @@ final class Store: ObservableObject {
         }
         await deleteRepo(repo)
         setInfo("Deleted \(slug) on GitHub and moved \(repo.name) to the Trash.")
+    }
+
+    // MARK: file tree
+    static let treeLimit = 30_000
+
+    /// The repo's files for the tree: tracked plus untracked that are not ignored (so .git and ignored folders stay out).
+    func loadTree(_ repo: Repo) async {
+        let r = await Git.run(["ls-files", "-z", "--cached", "--others", "--exclude-standard"], in: repo.url)
+        guard r.ok else { return }
+        var paths = Array(Set(r.out.split(separator: "\0").map(String.init)))
+        if paths.count > Store.treeLimit { paths = Array(paths.prefix(Store.treeLimit)); treeTruncated.insert(repo.id) } else { treeTruncated.remove(repo.id) }
+        let list = paths
+        trees[repo.id] = await Task.detached { TreeBuilder.build(list) }.value
+    }
+
+    /// The start of a file for the preview pane: up to ~200 KB, with a note for binary files.
+    func fileText(_ repo: Repo, _ path: String) async -> String {
+        let u = repo.url.appendingPathComponent(path)
+        guard let d = try? Data(contentsOf: u, options: .mappedIfSafe) else { return "This file is not on disk (it was deleted)." }
+        if d.prefix(8000).contains(0) { return "Binary file. No text preview." }
+        let lines = String(decoding: d.prefix(200_000), as: UTF8.self).split(separator: "\n", omittingEmptySubsequences: false)
+        return lines.prefix(3000).joined(separator: "\n") + (d.count > 200_000 || lines.count > 3000 ? "\n… (shortened)" : "")
+    }
+
+    // MARK: editing
+    /// A file's text for the editor: nil text and a reason when it cannot be edited as text here.
+    func fileForEditing(_ repo: Repo, _ path: String) async -> (String?, String?) {
+        let u = repo.url.appendingPathComponent(path)
+        guard FileManager.default.fileExists(atPath: u.path) else { return (nil, "This file is not on disk (it was deleted), so there is nothing to edit.") }
+        let size = (try? FileManager.default.attributesOfItem(atPath: u.path)[.size] as? Int) ?? 0
+        if size > 1_000_000 { return (nil, "This file is larger than 1 MB. Open it in your own editor instead.") }
+        guard let d = try? Data(contentsOf: u) else { return (nil, "Could not read this file.") }
+        if d.prefix(8000).contains(0) { return (nil, "Binary file. It cannot be edited as text.") }
+        guard let s = String(data: d, encoding: .utf8) else { return (nil, "This file is not UTF-8 text, so it is not edited here.") }
+        return (s, nil)
+    }
+
+    /// Writes an edited file, then re-reads the repo so the changes list, counts and tree are current. Returns an error text or nil.
+    func saveFile(_ repo: Repo, _ path: String, _ text: String) async -> String? {
+        do { try text.write(to: repo.url.appendingPathComponent(path), atomically: true, encoding: .utf8) }
+        catch { return error.localizedDescription }
+        await refresh(repo); await loadTree(repo)
+        return nil
+    }
+
+    // MARK: clone
+    /// The folder a clone would be made in, and whether it already exists.
+    func cloneDestination(parent: String, folder: String) -> URL { URL(fileURLWithPath: parent).appendingPathComponent(folder) }
+
+    /// Your repos on GitHub (needs gh, signed in), for the clone sheet's picker.
+    func listGitHubRepos() async -> (items: [GitHubRepoItem], note: String?) {
+        guard let gh = ghPath else { return ([], "Install the GitHub CLI (brew install gh) to pick from your GitHub repos.") }
+        let r = await Git.exec(gh, ["repo", "list", "--json", "nameWithOwner,description,isPrivate", "--limit", "100"], in: URL(fileURLWithPath: NSHomeDirectory()))
+        guard r.ok, let items = try? JSONDecoder().decode([GitHubRepoItem].self, from: Data(r.out.utf8)) else {
+            return ([], r.text.lowercased().contains("auth") ? "Run gh auth login in Terminal to list your GitHub repos." : "Could not list your GitHub repos.")
+        }
+        return (items, items.isEmpty ? "No repos found on your GitHub account." : nil)
+    }
+
+    /// Clones `source` (a URL, or owner/name) into `parent/folder`, then adds it to the chosen workspaces. Returns an error text or nil.
+    func cloneRepo(source: String, parent: String, folder: String, branch: String = "", workspaceIDs: [String], newWorkspace: String? = nil) async -> String? {
+        let src = source.trimmingCharacters(in: .whitespacesAndNewlines)
+        let name = folder.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !src.isEmpty else { return "Enter the repository URL or owner/name." }
+        guard !name.isEmpty, !name.contains("/") else { return "Enter a folder name without slashes." }
+        var isDir: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: parent, isDirectory: &isDir), isDir.boolValue else { return "The folder \(parent) does not exist." }
+        let dest = cloneDestination(parent: parent, folder: name)
+        guard !FileManager.default.fileExists(atPath: dest.path) else { return "\(dest.path) already exists. Choose another folder name." }
+        busy = true; defer { busy = false }
+        let b = branch.trimmingCharacters(in: .whitespaces)
+        let r: GitResult
+        if CloneSource.isShorthand(src) {
+            guard let gh = ghPath else { return "owner/name needs the GitHub CLI (gh). Install it, or paste the full URL." }
+            r = await Git.exec(gh, ["repo", "clone", src, dest.path] + (b.isEmpty ? [] : ["--", "--branch", b]), in: URL(fileURLWithPath: parent))
+        } else {
+            r = await Git.run(["clone"] + (b.isEmpty ? [] : ["--branch", b]) + ["--", src, dest.path], in: URL(fileURLWithPath: parent))
+        }
+        guard r.ok else {
+            try? FileManager.default.removeItem(at: dest)   // a failed clone can leave a half-made folder; it is ours, so remove it
+            return r.text
+        }
+        if !roots.contains(parent) && !extraRepos.contains(dest.path) { extraRepos.append(dest.path) }
+        var ids = workspaceIDs
+        if let n = newWorkspace?.trimmingCharacters(in: .whitespaces), !n.isEmpty {
+            let w = Workspace(name: n); workspaces.append(w); ids.append(w.id)
+        }
+        for id in ids { if let i = workspaces.firstIndex(where: { $0.id == id }), !workspaces[i].repos.contains(dest.path) { workspaces[i].repos.append(dest.path) } }
+        await scan()
+        if let cw = currentWorkspace, !cw.repos.contains(dest.path) { current = nil }
+        selected = dest.path
+        setInfo("Cloned \(name) into \(parent).")
+        return nil
     }
 
     // MARK: pull requests (GitHub CLI)

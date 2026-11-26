@@ -288,3 +288,61 @@ enum GitHubRemote {
         return parts.count == 2 ? parts.joined(separator: "/") : nil
     }
 }
+
+struct GitHubRepoItem: Decodable, Identifiable, Hashable {
+    let nameWithOwner: String
+    let description: String?
+    let isPrivate: Bool
+    var id: String { nameWithOwner }
+}
+
+enum CloneSource {
+    /// "owner/name" shorthand (no scheme, no colon, no leading slash): cloned with `gh`, which picks ssh or https from its config.
+    static func isShorthand(_ s: String) -> Bool {
+        let t = s.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !t.contains(":"), !t.hasPrefix("/"), !t.hasPrefix("."), !t.hasPrefix("~") else { return false }
+        let p = t.split(separator: "/", omittingEmptySubsequences: false)
+        return p.count == 2 && !p[0].isEmpty && !p[1].isEmpty && !t.contains(" ")
+    }
+    /// The folder git would pick: the last path part without ".git".
+    static func folderName(from s: String) -> String {
+        var t = s.trimmingCharacters(in: .whitespacesAndNewlines)
+        while t.hasSuffix("/") { t.removeLast() }
+        if t.hasSuffix(".git") { t.removeLast(4) }
+        let last = t.split(whereSeparator: { $0 == "/" || $0 == ":" }).last.map(String.init) ?? ""
+        return last
+    }
+}
+
+/// One row of the file tree: a folder (children is a list) or a file (children is nil).
+struct FileNode: Identifiable, Hashable {
+    let id: String          // the path from the repo root
+    let name: String
+    var children: [FileNode]?
+    var isDir: Bool { children != nil }
+}
+
+enum TreeBuilder {
+    private final class Dir { var dirs: [String: Dir] = [:]; var files: [String] = [] }
+
+    /// Builds the folder tree from `git ls-files` paths: folders first, then files, each sorted naturally.
+    static func build(_ paths: [String]) -> [FileNode] {
+        let root = Dir()
+        for p in paths {
+            let parts = p.split(separator: "/").map(String.init)
+            guard let file = parts.last else { continue }
+            var d = root
+            for part in parts.dropLast() {
+                if let n = d.dirs[part] { d = n } else { let n = Dir(); d.dirs[part] = n; d = n }
+            }
+            d.files.append(file)
+        }
+        func order(_ a: String, _ b: String) -> Bool { a.localizedStandardCompare(b) == .orderedAscending }
+        func convert(_ d: Dir, _ prefix: String) -> [FileNode] {
+            var out = d.dirs.keys.sorted(by: order).map { k in FileNode(id: prefix + k, name: k, children: convert(d.dirs[k]!, prefix + k + "/")) }
+            out += d.files.sorted(by: order).map { FileNode(id: prefix + $0, name: $0, children: nil) }
+            return out
+        }
+        return convert(root, "")
+    }
+}

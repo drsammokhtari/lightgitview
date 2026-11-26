@@ -14,4 +14,8 @@ echo "$out" | grep -q 'ignore-tracked README code=D' || { echo "FAIL ignore-trac
 echo "$out" | grep -q 'scopes /src/a.py /src/ \*.py /ref/x/' || { echo "FAIL scopes"; exit 1; }
 echo "$out" | grep -q 'pr files=2 comments=1 reviews=1 open=true diffs=README.md,src/api.py' || { echo "FAIL pr parse"; exit 1; }
 echo "$out" | grep -q 'remotes me/app me/app me/app nil nil' || { echo "FAIL remote slug"; exit 1; }
+echo "$out" | grep -q 'clone err=none listed=true inWorkspace=true duplicate=true failedLeftover=false folder=app short=true url=false' || { echo "FAIL clone"; exit 1; }
+echo "$out" | grep -q 'tree top=docs/,src/,README.md src=a/,b.py' || { echo "FAIL tree"; exit 1; }
+echo "$out" | grep -q 'repotree .*src' || { echo "FAIL repo tree"; exit 1; }
+echo "$out" | grep -q 'edit read=true why=none missing=true save=ok added=12->13' || { echo "FAIL edit"; exit 1; }
 echo "selftest ok"

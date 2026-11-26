@@ -1,7 +1,12 @@
 # Changelog
 
-## v1.1.1 · 2026-11-26
+## v1.2.0 · 2026-11-26
 - Right-click a changed file or folder for more actions: include or exclude from the commit, reveal in Finder, open, copy path, ignore, discard. The same list is under a new "..." button on each row.
+- **Edit files:** click a file in the tree or the changes list. A changed file opens on its diff with an **Edit** tab; an unchanged file opens in the editor. Save with ⌘S; the changes list and counts update. Moving to another file with unsaved edits asks Save or Don't Save. Text files up to 1 MB; binary, larger and non-UTF-8 files say why they can't be edited.
+- Layout: the columns now have fixed, readable widths (file tree 200, changes list 340) and only the diff takes spare room, so the Refresh, Pull and Push buttons and the right-hand panel are no longer pushed out of the window. The window cannot be made narrower than 1380 pixels. The ignore button on file rows moved into the "..." menu.
+- **File tree:** click a repo and a second sidebar shows its folders and files. Changed files carry their status letter and folders with changes carry a dot. Click a file to read its diff, or its text if unchanged. Right-click for Reveal in Finder, Open and Copy path. The Files toolbar button hides it.
+- **Clone repo…** (the + button or the workspace menu): paste a URL or owner/name, or pick one from your GitHub repos; choose the folder to clone into and its name, an optional branch, and the workspaces it joins (or create one). The clone is refused if the folder exists, and a failed clone leaves nothing behind.
+- `sh scripts/selftest.sh` checks cloning against the sample remote and no longer writes your saved settings.
 
 ## v1.1 · 2026-11-26
 - Ignore from the changes list: add a file, its folder, or all files with its extension to `.gitignore`. For a file git already tracks the app asks, then stops tracking it (the file stays on disk).

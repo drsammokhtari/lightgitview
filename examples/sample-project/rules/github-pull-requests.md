@@ -8,6 +8,8 @@ Pages read on 2026-11-26. No effective dates are published for these commands. E
 - `gh pr diff` prints the patch; `--color never` turns colour off [18]. Source: https://cli.github.com/manual/gh_pr_diff
 - `gh pr view --json` gives number, title, body, state, url, headRefName, baseRefName, isDraft, author, additions, deletions, files, comments, reviews and reviewDecision [19]. Source: https://cli.github.com/manual/gh_pr_view
 
+- `gh repo clone <repository> [<directory>]` clones a GitHub repo; with no protocol given it uses the git_protocol setting [24]. Source: https://cli.github.com/manual/gh_repo_clone
+- `gh repo list --json` lists repos; `--limit` sets how many (default 30) [25]. Source: https://cli.github.com/manual/gh_repo_list
 - `gh repo delete owner/repo --yes` deletes a repository. With no repository argument `--yes` is ignored. It needs the delete_repo scope (`gh auth refresh -s delete_repo`). Deleting a private repo that is not a fork also deletes its forks, and `gh` asks first unless `--accept-cascading-deletion-of-private-forks` is passed; the app does not pass it [22]. Source: https://cli.github.com/manual/gh_repo_delete
 
 UNVERIFIED: whether a fine-grained token can hold the delete_repo scope. UNVERIFIED: whether GitHub offers any way to delete a pull request (the app closes it instead). UNVERIFIED: whether `gh` refuses to approve your own pull request.

@@ -3,6 +3,7 @@ import SwiftUI
 struct ContentView: View {
     @EnvironmentObject var store: Store
     @State private var showSide = true
+    @AppStorage("showTree") private var showTree = true
     @State private var showRoots = false
     var body: some View {
         NavigationSplitView {
@@ -10,19 +11,30 @@ struct ContentView: View {
                 .navigationSplitViewColumnWidth(min: 200, ideal: 240, max: 320)
         } detail: {
             if let repo = store.selectedRepo {
-                RepoDetail(repo: repo).id(repo.id)
-                    .inspector(isPresented: $showSide) { SidePanel(repo: repo).id(repo.id).inspectorColumnWidth(min: 260, ideal: 300, max: 380) }
+                // Fixed widths for the columns that must stay readable; only the diff takes the spare room.
+                HStack(spacing: 0) {
+                    if showTree { FileTreePane(repo: repo).id(repo.id).frame(width: 200); Divider() }
+                    RepoDetail(repo: repo).id(repo.id).frame(minWidth: 570, maxWidth: .infinity)
+                }
+                .inspector(isPresented: $showSide) { SidePanel(repo: repo).id(repo.id).inspectorColumnWidth(min: 260, ideal: 300, max: 380) }
             }
             else { EmptyState() }
         }
         .sheet(isPresented: $showRoots) { RootsSheet() }
+        .sheet(isPresented: $store.showClone) { CloneSheet().environmentObject(store) }
         .toolbar {
             ToolbarItem(placement: .navigation) {
                 Menu {
+                    Button("Clone repo…") { store.showClone = true }
+                    Divider()
                     Button("Add repo or repos folder…") { store.addPath() }
                     Button("Manage repos folders…") { showRoots = true }
                 } label: { Label("Add repos", systemImage: "plus") }
                 .help("Add a repo, or the folder that holds your repos")
+            }
+            ToolbarItem {
+                Button { showTree.toggle() } label: { Label("Files", systemImage: "list.bullet.indent") }
+                    .help("Show or hide the repo's folders and files")
             }
             ToolbarItem {
                 Button { showSide.toggle() } label: { Label("Branches and pull requests", systemImage: "sidebar.trailing") }
@@ -90,6 +102,7 @@ struct Sidebar: View {
                 }
             }
             Divider()
+            Button("Clone repo…") { store.showClone = true }
             Button("Add repo or repos folder…") { store.addPath() }
             Button("Manage repos folders…") { showRoots = true }
         } label: {
@@ -325,6 +338,11 @@ struct RepoDetail: View {
     @State private var focus: Change?
     @State private var diffText = ""
         @State private var collapsed = Set<String>()
+    @State private var openPath: String?        // the file shown in the right-hand pane
+    @State private var mode = 0                 // 0 = Changes (diff), 1 = Edit
+    @State private var editText = ""
+    @State private var editOriginal = ""
+    @State private var editBlock: String?       // why this file cannot be edited, if so
 
     var st: RepoStatus { store.statuses[repo.id] ?? RepoStatus() }
     var ticked: Set<String> { store.ticked[repo.id] ?? [] }
@@ -336,17 +354,24 @@ struct RepoDetail: View {
         VStack(spacing: 0) {
             header
             Divider()
-            HSplitView {
-                changesList.frame(minWidth: 240, idealWidth: 320)
-                diffPane.frame(minWidth: 240)
+            HStack(spacing: 0) {
+                changesList.frame(width: 340)
+                Divider()
+                diffPane.frame(minWidth: 220, maxWidth: .infinity)
             }
             Divider()
             commitBox
         }
         .task { await store.refresh(repo, fetch: true) }
-        .onChange(of: st.changes.map(\.path)) { _, paths in
-            if let f = focus, !paths.contains(f.path) { focus = nil; diffText = "" }
-            else if let f = focus { focus = st.changes.first { $0.path == f.path } ?? f; Task { await loadDiff() } }
+        .onChange(of: store.focusRequest) { _, p in
+            if let p { Task { await openFile(p) } }
+        }
+        .onChange(of: st.changes.map(\.path)) { _, _ in
+            guard let p = openPath else { return }
+            focus = st.changes.first { $0.path == p }
+            if focus == nil && !FileManager.default.fileExists(atPath: url(p).path) { closeFile() }   // discarded or deleted
+            else if focus == nil { mode = 1 }                                                       // committed: it stays open, now unchanged
+            else { Task { await loadDiff() } }
         }
     }
 
@@ -439,10 +464,6 @@ struct RepoDetail: View {
             if let dir {
                 Button { askIgnoreFolder(dir, cs) } label: { Image(systemName: "eye.slash").frame(width: 22, height: 22).contentShape(Rectangle()) }
                     .help("Ignore this folder: add it to .gitignore").accessibilityLabel("Ignore folder")
-            } else if let c = cs.first {
-                Menu { ignoreMenu(c) } label: { Image(systemName: "eye.slash").frame(width: 22, height: 22).contentShape(Rectangle()) }
-                    .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
-                    .help("Ignore: add to .gitignore").accessibilityLabel("Ignore")
             }
             Button { askDiscard(cs) } label: { Image(systemName: "trash").frame(width: 22, height: 22).contentShape(Rectangle()) }
                 .help("Discard: remove this change").accessibilityLabel("Discard")
@@ -532,7 +553,7 @@ struct RepoDetail: View {
                     Text("No changes in this repo").foregroundStyle(.secondary)
                 }.frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                List(selection: Binding(get: { focus?.id }, set: { id in focus = st.changes.first { $0.id == id }; Task { await loadDiff() } })) {
+                List(selection: Binding(get: { focus?.id }, set: { id in if let id { Task { await openFile(id) } } })) {
                     ForEach(rows) { r in
                         if let c = r.change {
                             HStack(spacing: 8) {
@@ -545,7 +566,7 @@ struct RepoDetail: View {
                                 Spacer(minLength: 4)
                                 if c.isSecret { Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(Color.orange).help("Looks like a secret").accessibilityLabel("Looks like a secret") }
                                 if let a = c.added, let d = c.deleted, !c.untracked {
-                                    Text("+\(a)").foregroundStyle(.green); Text("−\(d)").foregroundStyle(.red)
+                                    Text("+\(a)").foregroundStyle(.green).fixedSize(); Text("−\(d)").foregroundStyle(.red).fixedSize()
                                 }
                                 rowActions(r.files, [c])
                             }
@@ -582,13 +603,75 @@ struct RepoDetail: View {
         }
     }
 
+    var dirty: Bool { openPath != nil && editBlock == nil && editText != editOriginal }
+
     var diffPane: some View {
         Group {
-            if focus == nil { Text("Select a file to see its changes").foregroundStyle(.secondary).frame(maxWidth: .infinity, maxHeight: .infinity) }
-            else {
-                DiffView(text: diffText)
+            if let p = openPath {
+                VStack(spacing: 0) {
+                    HStack(spacing: 8) {
+                        Image(systemName: "doc.text").foregroundStyle(.secondary)
+                        Text(p).lineLimit(1).truncationMode(.middle)
+                        if dirty { Text("● edited").font(.caption).foregroundStyle(Color.brand) }
+                        Spacer()
+                        if focus != nil {
+                            Picker("", selection: $mode) { Text("Changes").tag(0); Text("Edit").tag(1) }
+                                .pickerStyle(.segmented).labelsHidden().frame(width: 150)
+                        } else { Text("no changes").font(.caption).foregroundStyle(.secondary) }
+                        if dirty { Button("Revert") { editText = editOriginal }.help("Throw away your edits") }
+                        Button("Save") { Task { await saveEdit() } }
+                            .keyboardShortcut("s", modifiers: .command).disabled(!dirty)
+                            .help("Save the file (⌘S)")
+                    }.font(.callout).padding(.horizontal, 12).padding(.vertical, 6)
+                    Divider()
+                    if mode == 0, focus != nil { DiffView(text: diffText) } else { editor(p) }
+                }
             }
+            else { Text("Select a file to see or edit it").foregroundStyle(.secondary).frame(maxWidth: .infinity, maxHeight: .infinity) }
         }
+    }
+
+    @ViewBuilder func editor(_ p: String) -> some View {
+        if let why = editBlock {
+            VStack(spacing: 8) {
+                Text(why).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                if FileManager.default.fileExists(atPath: url(p).path) { Button("Open in the default app") { NSWorkspace.shared.open(url(p)) } }
+            }.padding().frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
+            TextEditor(text: $editText)
+                .font(.system(size: 12, design: .monospaced))
+                .scrollContentBackground(.hidden)
+                .padding(6)
+        }
+    }
+
+    // MARK: opening, editing and saving a file
+    /// Shows a file in the right-hand pane: its diff if it has changes (Edit is one click away), otherwise the editor.
+    func openFile(_ path: String) async {
+        if path == openPath { return }
+        if dirty {
+            let a = NSAlert()
+            a.messageText = "Save changes to \((openPath ?? "").split(separator: "/").last.map(String.init) ?? "this file")?"
+            a.informativeText = "Your edits are not saved yet."
+            a.addButton(withTitle: "Save"); a.addButton(withTitle: "Don't Save")
+            if a.runModal() == .alertFirstButtonReturn { await saveEdit() }
+        }
+        openPath = path
+        focus = st.changes.first { $0.path == path }
+        diffText = ""
+        mode = focus == nil ? 1 : 0
+        let (t, why) = await store.fileForEditing(repo, path)
+        editBlock = why; editText = t ?? ""; editOriginal = t ?? ""
+        if focus != nil { await loadDiff() }
+    }
+
+    func closeFile() { openPath = nil; focus = nil; diffText = ""; editText = ""; editOriginal = ""; editBlock = nil }
+
+    func saveEdit() async {
+        guard let p = openPath, editBlock == nil else { return }
+        if let err = await store.saveFile(repo, p, editText) { store.setError("Could not save \(p): \(err)"); return }
+        editOriginal = editText
+        store.setInfo("Saved \(p).")
     }
 
     var commitBox: some View {
@@ -791,5 +874,189 @@ struct PRSheet: View {
             if let err { result = Banner(text: err, isError: true) }
             else { result = Banner(text: ok, isError: false); text = ""; if reload { await load() } }
         }
+    }
+}
+
+
+/// Clone a repo: where from, which folder, and which workspaces it joins.
+struct CloneSheet: View {
+    @EnvironmentObject var store: Store
+    @Environment(\.dismiss) var dismiss
+    @State private var source = ""
+    @State private var parent = ""
+    @State private var folder = ""
+    @State private var folderEdited = false
+    @State private var branch = ""
+    @State private var picked = Set<String>()
+    @State private var newWorkspace = ""
+    @State private var cloning = false
+    @State private var error: String?
+    @State private var mine: [GitHubRepoItem] = []
+    @State private var mineNote: String?
+    @State private var loadedMine = false
+
+    var parentOptions: [String] { store.roots + (store.roots.contains(parent) || parent.isEmpty ? [] : [parent]) }
+    var ready: Bool { !source.trimmingCharacters(in: .whitespaces).isEmpty && !folder.trimmingCharacters(in: .whitespaces).isEmpty && !parent.isEmpty && !cloning }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Clone a repo").font(.title3.weight(.semibold))
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Repository").font(.callout.weight(.semibold))
+                HStack {
+                    TextField("https://github.com/owner/name  or  owner/name", text: $source).textFieldStyle(.roundedBorder)
+                    Menu("My GitHub repos") {
+                        if mine.isEmpty { Text(mineNote ?? "Loading…") }
+                        ForEach(mine) { r in Button((r.isPrivate ? "🔒 " : "") + r.nameWithOwner) { source = r.nameWithOwner } }
+                    }.fixedSize().task { if !loadedMine { loadedMine = true; let (i, n) = await store.listGitHubRepos(); mine = i; mineNote = n } }
+                }
+                Text("A full URL uses git. owner/name uses the GitHub CLI, which picks ssh or https from its settings.").font(.caption).foregroundStyle(.secondary)
+            }
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Clone into").font(.callout.weight(.semibold))
+                HStack {
+                    Picker("", selection: $parent) {
+                        ForEach(parentOptions, id: \.self) { Text($0).tag($0) }
+                    }.labelsHidden().frame(maxWidth: .infinity)
+                    Button("Choose…") { chooseParent() }
+                }
+                HStack {
+                    Text("Folder name").foregroundStyle(.secondary)
+                    TextField("", text: $folder, onEditingChanged: { _ in }).textFieldStyle(.roundedBorder)
+                        .onChange(of: folder) { _, _ in if !folder.isEmpty && folder != CloneSource.folderName(from: source) { folderEdited = true } }
+                    TextField("branch (optional)", text: $branch).textFieldStyle(.roundedBorder).frame(width: 170)
+                }
+                if !parent.isEmpty && !folder.isEmpty { Text("Will be cloned to \(store.cloneDestination(parent: parent, folder: folder).path)").font(.caption).foregroundStyle(.secondary).textSelection(.enabled) }
+            }
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Workspaces").font(.callout.weight(.semibold))
+                if store.workspaces.isEmpty { Text("No workspaces yet. Name one below to create it.").font(.caption).foregroundStyle(.secondary) }
+                ForEach(store.workspaces) { w in
+                    Toggle(w.name, isOn: Binding(get: { picked.contains(w.id) }, set: { on in if on { picked.insert(w.id) } else { picked.remove(w.id) } }))
+                }
+                TextField("New workspace (optional)", text: $newWorkspace).textFieldStyle(.roundedBorder).frame(maxWidth: 280)
+            }
+            if let error { Text(error).foregroundStyle(Color.red).font(.callout).textSelection(.enabled) }
+            HStack {
+                if cloning { ProgressView().controlSize(.small); Text("Cloning…").foregroundStyle(.secondary) }
+                Spacer()
+                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction).disabled(cloning)
+                Button("Clone") { clone() }.keyboardShortcut(.defaultAction).buttonStyle(.borderedProminent).disabled(!ready)
+            }
+        }
+        .padding(20).frame(width: 600)
+        .onAppear {
+            if parent.isEmpty { parent = store.roots.first ?? NSHomeDirectory() }
+            if let w = store.currentWorkspace { picked.insert(w.id) }
+        }
+        .onChange(of: source) { _, new in if !folderEdited { folder = CloneSource.folderName(from: new) } }
+    }
+
+    func chooseParent() {
+        let p = NSOpenPanel()
+        p.canChooseDirectories = true; p.canChooseFiles = false; p.canCreateDirectories = true
+        p.prompt = "Use folder"; p.message = "Choose the folder to clone into"
+        if p.runModal() == .OK, let u = p.url { parent = u.path }
+    }
+
+    func clone() {
+        cloning = true; error = nil
+        Task {
+            let err = await store.cloneRepo(source: source, parent: parent, folder: folder, branch: branch, workspaceIDs: Array(picked), newWorkspace: newWorkspace)
+            cloning = false
+            if let err { error = err } else { dismiss() }
+        }
+    }
+}
+
+
+/// A file's text, plain (no diff colours).
+struct TextPreview: View {
+    let text: String
+    var body: some View {
+        ScrollView([.vertical, .horizontal]) {
+            Text(text.isEmpty ? " " : text).font(.system(size: 12, design: .monospaced)).textSelection(.enabled)
+                .padding(12).frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+}
+
+/// The second sidebar: the repo's folders and files. Changed files carry their status letter; click one to see its diff,
+/// click an unchanged file to read it.
+struct FileTreePane: View {
+    @EnvironmentObject var store: Store
+    let repo: Repo
+    @State private var sel: String?
+
+    var st: RepoStatus { store.statuses[repo.id] ?? RepoStatus() }
+    var nodes: [FileNode] { store.trees[repo.id] ?? [] }
+    var byPath: [String: Change] { Dictionary(st.changes.map { ($0.path, $0) }, uniquingKeysWith: { a, _ in a }) }
+    /// Every folder that has a changed file somewhere below it.
+    var dirtyDirs: Set<String> {
+        var out = Set<String>()
+        for c in st.changes {
+            var parts = c.path.split(separator: "/").map(String.init); parts.removeLast()
+            var acc = ""
+            for p in parts { acc += (acc.isEmpty ? "" : "/") + p; out.insert(acc) }
+        }
+        return out
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Text("Files").font(.headline)
+                Spacer()
+                Button { Task { await store.loadTree(repo) } } label: { Image(systemName: "arrow.clockwise") }
+                    .buttonStyle(.borderless).help("Reload the file list").accessibilityLabel("Reload the file list")
+            }.padding(.horizontal, 12).padding(.vertical, 8)
+            Divider()
+            if nodes.isEmpty {
+                Text(store.trees[repo.id] == nil ? "Loading…" : "No files").foregroundStyle(.secondary).frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                let changes = byPath, dirty = dirtyDirs
+                List(nodes, children: \.children, selection: $sel) { n in
+                    HStack(spacing: 6) {
+                        Image(systemName: n.isDir ? "folder" : "doc").foregroundStyle(.secondary).frame(width: 14)
+                        Text(n.name).lineLimit(1).truncationMode(.middle)
+                        Spacer(minLength: 4)
+                        if let c = changes[n.id] {
+                            Text(c.code).font(.caption.weight(.bold)).foregroundStyle(c.code == "D" ? Color.red : (c.untracked ? Color.secondary : Color.brand))
+                                .accessibilityLabel("changed")
+                        } else if n.isDir && dirty.contains(n.id) {
+                            Circle().fill(Color.brand).frame(width: 6, height: 6).accessibilityLabel("has changes")
+                        }
+                    }
+                    .font(.callout).contentShape(Rectangle())
+                    .contextMenu { menu(n, changes[n.id]) }
+                }
+                .listStyle(.inset)
+                if store.treeTruncated.contains(repo.id) { Text("Showing the first \(Store.treeLimit) files").font(.caption).foregroundStyle(.secondary).padding(6) }
+            }
+        }
+        .task(id: repo.id) { await store.loadTree(repo) }
+        .onChange(of: st.changes.map(\.path)) { _, _ in Task { await store.loadTree(repo) } }
+        .onChange(of: sel) { _, id in
+            guard let id, let n = find(id), !n.isDir else { return }
+            store.focusRequest = nil; store.focusRequest = id
+        }
+    }
+
+    func find(_ id: String) -> FileNode? {
+        func walk(_ ns: [FileNode]) -> FileNode? {
+            for n in ns { if n.id == id { return n }; if let c = n.children, let f = walk(c) { return f } }
+            return nil
+        }
+        return walk(nodes)
+    }
+
+    @ViewBuilder func menu(_ n: FileNode, _ c: Change?) -> some View {
+        let u = repo.url.appendingPathComponent(n.id)
+        let exists = FileManager.default.fileExists(atPath: u.path)
+        Button("Reveal in Finder") { NSWorkspace.shared.activateFileViewerSelecting([exists ? u : u.deletingLastPathComponent()]) }
+        if !n.isDir { Button("Open") { NSWorkspace.shared.open(u) }.disabled(!exists) }
+        Button("Copy path") { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(n.id, forType: .string) }
+        Button("Copy full path") { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(u.path, forType: .string) }
+        if c != nil { Divider(); Button("Show its changes") { store.focusRequest = nil; store.focusRequest = n.id } }
     }
 }

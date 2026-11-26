@@ -22,6 +22,9 @@ sh scripts/make-sample.sh ~/sample-workspace   # real sample repos to try the ap
 | Secret-looking file names | `Change.looksSecret` in `Git.swift` |
 | What the ignore menu offers (file, folder, extension) | `IgnoreScope` in `Git.swift`, `askIgnore` in `Views.swift` |
 | Right-click and "..." menus on changed files and folders | `fileMenu`, `dirMenu`, `rowActions` in `Views.swift` |
+| Editing a file (open, edit, save) | `Store.fileForEditing`, `Store.saveFile`, `openFile` and `saveEdit` in `Views.swift` |
+| File tree sidebar | `FileNode` and `TreeBuilder` in `Git.swift`, `Store.loadTree`, `FileTreePane` in `Views.swift` |
+| Clone repo | `Store.cloneRepo`, `CloneSource` in `Git.swift`, `CloneSheet` in `Views.swift` |
 | Delete repo (disk, and disk plus GitHub) | `Store.deleteRepo`, `Store.deleteRepoEverywhere`, `GitHubRemote` in `Git.swift`, `askDeleteRepo` and `askDeleteEverywhere` in `Views.swift` |
 | Pull request review (view, diff, comment, review, close) | `PRDetail` and `PRParser` in `Git.swift`, `Store.loadPR` and the `gh` calls, `PRSheet` in `Views.swift` |
 
