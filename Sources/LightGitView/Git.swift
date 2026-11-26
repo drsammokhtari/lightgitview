@@ -273,3 +273,18 @@ enum IgnoreScope: CaseIterable {
         }
     }
 }
+
+enum GitHubRemote {
+    /// "owner/name" from an origin URL such as git@github.com:owner/name.git or https://github.com/owner/name. nil if not GitHub.
+    static func slug(from url: String) -> String? {
+        let u = url.trimmingCharacters(in: .whitespacesAndNewlines)
+        var rest: Substring
+        if u.hasPrefix("git@github.com:") { rest = u.dropFirst("git@github.com:".count) }
+        else if let r = u.range(of: "github.com/"), u.hasPrefix("http") || u.hasPrefix("ssh://") || u.hasPrefix("git://") { rest = u[r.upperBound...] }
+        else { return nil }
+        if rest.hasSuffix("/") { rest = rest.dropLast() }
+        if rest.hasSuffix(".git") { rest = rest.dropLast(4) }
+        let parts = rest.split(separator: "/")
+        return parts.count == 2 ? parts.joined(separator: "/") : nil
+    }
+}

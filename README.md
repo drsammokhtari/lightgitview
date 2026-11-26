@@ -34,7 +34,7 @@ A 2-minute tour, with captions: install, first launch, the repo list, commit, pu
 - Open a repo to see its changed files as a folder tree. Tick the files you want, write a message, commit.
 - Pull, push and refresh from the app. Pull is fast-forward only, and push waits while you are behind.
 - Discard a file or a whole folder (discarded new files go to the Trash, so you can get them back), or add it to `.gitignore`: this file, its folder, or every file with its extension.
-- Right-click a repo and choose **Delete repo from disk**. The folder goes to the Trash, and the confirmation says how many uncommitted changes and unpushed commits it holds.
+- Right-click a repo to **Delete from disk** (the folder goes to the Trash, and the confirmation says how many uncommitted changes and unpushed commits it holds) or **Delete from disk and GitHub** (also deletes the repo on GitHub for good: you type its name to confirm; needs `gh` with the `delete_repo` permission).
 - Group repos into workspaces, or look at all of them at once.
 - A side panel lists branches, commits you do not have yet, and open pull requests. Open a pull request to read its files and diff and its conversation, then comment, approve, request changes or close it (needs the GitHub CLI).
 - It warns before you commit a file that looks like a secret, such as `.env`.

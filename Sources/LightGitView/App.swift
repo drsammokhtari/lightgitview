@@ -36,6 +36,7 @@ struct LightGitViewApp: App {
                     print("ignore-tracked README code=\(rd?.code ?? "gone")")
                 }
                 print("scopes \(IgnoreScope.file.pattern(for: "src/a.py")!) \(IgnoreScope.folder.pattern(for: "src/a.py")!) \(IgnoreScope.ext.pattern(for: "src/a.py")!) \(IgnoreScope.file.pattern(for: "ref/x/")!)")
+                print("remotes \(GitHubRemote.slug(from: "git@github.com:me/app.git") ?? "nil") \(GitHubRemote.slug(from: "https://github.com/me/app") ?? "nil") \(GitHubRemote.slug(from: "https://github.com/me/app.git/") ?? "nil") \(GitHubRemote.slug(from: "git@gitlab.com:me/app.git") ?? "nil") \(GitHubRemote.slug(from: "/tmp/x.git") ?? "nil")")
                 let fixture = #"{"number":7,"title":"Add health check","body":"Adds /health","state":"OPEN","url":"https://example.com/pr/7","headRefName":"feat/health","baseRefName":"main","isDraft":false,"author":{"login":"jordan"},"additions":14,"deletions":3,"files":[{"path":"src/api.py","additions":12,"deletions":3},{"path":"README.md","additions":2,"deletions":0}],"comments":[{"author":{"login":"sam"},"body":"Looks good","createdAt":"2026-11-26T01:00:00Z"}],"reviews":[{"author":{"login":"sam"},"state":"APPROVED","body":"","submittedAt":"2026-11-26T02:00:00Z"}],"reviewDecision":"APPROVED"}"#
                 let d = try? JSONDecoder().decode(PRDetail.self, from: Data(fixture.utf8))
                 let parts = PRParser.splitDiff("diff --git a/src/api.py b/src/api.py\n+x\ndiff --git a/README.md b/README.md\n-y\n")

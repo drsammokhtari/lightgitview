@@ -13,4 +13,5 @@ echo "$out" | grep -q 'ignore-ext notes-listed=false gitignore-listed=true' || {
 echo "$out" | grep -q 'ignore-tracked README code=D' || { echo "FAIL ignore-tracked"; exit 1; }
 echo "$out" | grep -q 'scopes /src/a.py /src/ \*.py /ref/x/' || { echo "FAIL scopes"; exit 1; }
 echo "$out" | grep -q 'pr files=2 comments=1 reviews=1 open=true diffs=README.md,src/api.py' || { echo "FAIL pr parse"; exit 1; }
+echo "$out" | grep -q 'remotes me/app me/app me/app nil nil' || { echo "FAIL remote slug"; exit 1; }
 echo "selftest ok"

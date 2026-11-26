@@ -119,7 +119,27 @@ struct Sidebar: View {
             Button("Remove from “\(w.name)”") { store.toggleMember(r, w) }
         }
         Divider()
-        Button("Delete repo from disk…", role: .destructive) { askDeleteRepo(r) }
+        Button("Delete from disk…", role: .destructive) { askDeleteRepo(r) }
+        Button("Delete from disk and GitHub…", role: .destructive) { askDeleteEverywhere(r) }
+    }
+
+    /// The most destructive act in the app: removes the repo on GitHub for good. Asks for the repo's name to be typed.
+    func askDeleteEverywhere(_ r: Repo) {
+        Task {
+            guard let slug = await store.githubSlug(r) else {
+                _ = confirm("No GitHub repo to delete", "\(r.name) has no origin remote on github.com. Use Delete from disk instead.", button: "OK"); return
+            }
+            let st = store.statuses[r.id]
+            var local = ""
+            if let st, !st.changes.isEmpty || st.ahead > 0 { local = "\n\nThis Mac also holds \(st.changes.count) uncommitted change\(st.changes.count == 1 ? "" : "s") and \(st.ahead) unpushed commit\(st.ahead == 1 ? "" : "s")." }
+            let typed = promptText("Delete \(slug) on GitHub and on this Mac?",
+                "This permanently deletes \(slug) on GitHub, with its issues, pull requests, releases and stars. It cannot be undone, and private forks may be deleted with it. The folder on this Mac is moved to the Trash afterwards, and will then be the only copy." + local + "\n\nType \(slug) to confirm.", "")
+            guard let typed else { return }
+            guard typed.trimmingCharacters(in: .whitespaces) == slug else {
+                _ = confirm("Name did not match", "Nothing was deleted.", button: "OK"); return
+            }
+            await store.deleteRepoEverywhere(r, slug: slug)
+        }
     }
 
     func askDeleteRepo(_ r: Repo) {

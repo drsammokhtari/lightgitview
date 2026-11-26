@@ -348,6 +348,27 @@ final class Store: ObservableObject {
         setInfo("Moved \(repo.name) to the Trash.")
     }
 
+    /// The GitHub "owner/name" of a repo's origin remote, or nil when it has none or it is not on GitHub.
+    func githubSlug(_ repo: Repo) async -> String? {
+        let r = await Git.run(["remote", "get-url", "origin"], in: repo.url)
+        return r.ok ? GitHubRemote.slug(from: r.out) : nil
+    }
+
+    /// Permanently deletes the repo on GitHub, then moves the local folder to the Trash. If GitHub refuses, nothing local is touched.
+    func deleteRepoEverywhere(_ repo: Repo, slug: String) async {
+        guard let gh = ghPath else { setError("The GitHub CLI (gh) is not installed."); return }
+        busy = true
+        let r = await Git.exec(gh, ["repo", "delete", slug, "--yes"], in: repo.url)
+        busy = false
+        guard r.ok else {
+            let hint = r.text.lowercased().contains("delete_repo") ? "\n\nGitHub needs permission to delete repos. In Terminal run: gh auth refresh -s delete_repo" : ""
+            setError("GitHub did not delete \(slug). The folder on this Mac was not touched.\n" + r.text + hint)
+            return
+        }
+        await deleteRepo(repo)
+        setInfo("Deleted \(slug) on GitHub and moved \(repo.name) to the Trash.")
+    }
+
     // MARK: pull requests (GitHub CLI)
     var ghPath: String? { ["/opt/homebrew/bin/gh", "/usr/local/bin/gh"].first { FileManager.default.isExecutableFile(atPath: $0) } }
 
