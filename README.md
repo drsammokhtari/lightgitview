@@ -6,6 +6,28 @@
 
 ![version](https://img.shields.io/badge/version-1.0-0F766E) ![platform](https://img.shields.io/badge/macOS-14%2B-0F766E) ![licence](https://img.shields.io/badge/licence-MIT-0F766E)
 
+<p align="center"><img src="docs/screenshot.png" width="900" alt="LightGitView showing a repo's changed files as a folder tree, a commit message ready, and the side panel with branches and commits to push"></p>
+
+## Walkthrough
+
+[![Watch the walkthrough: 1 minute 55 seconds](docs/screenshot-side-panel.png)](docs/walkthrough.mp4)
+
+A 2-minute tour, with captions: install, first launch, the repo list, commit, pull and push, discard and ignore, workspaces, the side panel and the secret warning. [Watch it](docs/walkthrough.mp4) (GitHub plays it in the browser). Chapters:
+
+| Time | Chapter |
+|---|---|
+| 0:00 | What it is |
+| 0:12 | Install |
+| 0:28 | First launch |
+| 0:40 | The repo list |
+| 0:47 | Commit |
+| 0:58 | Pull and push |
+| 1:08 | Discard and ignore |
+| 1:18 | Workspaces |
+| 1:24 | The side panel |
+| 1:36 | Secret warning |
+| 1:42 | Recap |
+
 ## What it does
 
 - Pick a folder and see every git repo in it, with its branch and how many changes, commits to push and commits to pull.
