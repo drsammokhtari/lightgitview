@@ -1,5 +1,8 @@
 # Changelog
 
+## v1.1.1 · 2026-11-26
+- Right-click a changed file or folder for more actions: include or exclude from the commit, reveal in Finder, open, copy path, ignore, discard. The same list is under a new "..." button on each row.
+
 ## v1.1 · 2026-11-26
 - Ignore from the changes list: add a file, its folder, or all files with its extension to `.gitignore`. For a file git already tracks the app asks, then stops tracking it (the file stays on disk).
 - Right-click a repo: **Delete from disk** moves the folder to the Trash after a confirmation that names uncommitted changes and unpushed commits. **Delete from disk and GitHub** also deletes the repo on GitHub for good: you type its owner/name to confirm, GitHub is deleted first, and the folder is only touched if GitHub agreed. Needs the GitHub CLI with the delete_repo permission (`gh auth refresh -s delete_repo`).

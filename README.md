@@ -4,7 +4,7 @@
 
 **Every repo, one light window.** A small Mac app that shows all your git repos in one place, with what changed in each, and lets you commit, pull and push without opening a terminal.
 
-![version](https://img.shields.io/badge/version-1.1-0F766E) ![platform](https://img.shields.io/badge/macOS-14%2B-0F766E) ![licence](https://img.shields.io/badge/licence-MIT-0F766E)
+![version](https://img.shields.io/badge/version-1.1.1-0F766E) ![platform](https://img.shields.io/badge/macOS-14%2B-0F766E) ![licence](https://img.shields.io/badge/licence-MIT-0F766E)
 
 <p align="center"><img src="docs/screenshot.png" width="900" alt="LightGitView showing a repo's changed files as a folder tree, a commit message ready, and the side panel with branches and commits to push"></p>
 
@@ -33,6 +33,7 @@ A 2-minute tour, with captions: install, first launch, the repo list, commit, pu
 - Pick a folder and see every git repo in it, with its branch and how many changes, commits to push and commits to pull.
 - Open a repo to see its changed files as a folder tree. Tick the files you want, write a message, commit.
 - Pull, push and refresh from the app. Pull is fast-forward only, and push waits while you are behind.
+- Right-click a changed file or folder (or use its … button) to reveal it in Finder, open it, copy its path, include it in or exclude it from the commit, ignore it or discard it.
 - Discard a file or a whole folder (discarded new files go to the Trash, so you can get them back), or add it to `.gitignore`: this file, its folder, or every file with its extension.
 - Right-click a repo to **Delete from disk** (the folder goes to the Trash, and the confirmation says how many uncommitted changes and unpushed commits it holds) or **Delete from disk and GitHub** (also deletes the repo on GitHub for good: you type its name to confirm; needs `gh` with the `delete_repo` permission).
 - Group repos into workspaces, or look at all of them at once.

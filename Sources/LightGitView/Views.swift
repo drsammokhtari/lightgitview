@@ -446,7 +446,50 @@ struct RepoDetail: View {
             }
             Button { askDiscard(cs) } label: { Image(systemName: "trash").frame(width: 22, height: 22).contentShape(Rectangle()) }
                 .help("Discard: remove this change").accessibilityLabel("Discard")
+            Menu {
+                if let dir { dirMenu(dir, cs, files) } else if let c = cs.first { fileMenu(c) }
+            } label: { Image(systemName: "ellipsis.circle").frame(width: 22, height: 22).contentShape(Rectangle()) }
+                .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+                .help("More actions (also on right-click)").accessibilityLabel("More actions")
         }.buttonStyle(.borderless).foregroundStyle(.secondary)
+    }
+
+    // MARK: right-click menus
+    func url(_ path: String) -> URL { repo.url.appendingPathComponent(path) }
+    func reveal(_ path: String) {
+        let u = url(path)
+        if FileManager.default.fileExists(atPath: u.path) { NSWorkspace.shared.activateFileViewerSelecting([u]) }
+        else { NSWorkspace.shared.activateFileViewerSelecting([u.deletingLastPathComponent()]) }   // deleted files: show the folder
+    }
+    func copy(_ text: String) { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(text, forType: .string) }
+
+    @ViewBuilder func fileMenu(_ c: Change) -> some View {
+        let on = ticked.contains(c.path)
+        let exists = FileManager.default.fileExists(atPath: url(c.path).path)
+        Button(on ? "Exclude from commit" : "Include in commit") { store.toggle(repo, c.path) }
+        Divider()
+        Button("Reveal in Finder") { reveal(c.path) }
+        Button("Open") { NSWorkspace.shared.open(url(c.path)) }.disabled(!exists)
+        Button("Copy path") { copy(c.path) }
+        Button("Copy full path") { copy(url(c.path).path) }
+        Divider()
+        ignoreMenu(c)
+        Divider()
+        Button("Discard…", role: .destructive) { askDiscard([c]) }
+    }
+
+    @ViewBuilder func dirMenu(_ dir: String, _ cs: [Change], _ files: [String]) -> some View {
+        let all = files.allSatisfy { ticked.contains($0) }
+        Button(all ? "Exclude all from commit" : "Include all in commit") { store.setTicked(repo, files, on: !all) }
+        Button(collapsed.contains(dir) ? "Expand" : "Collapse") { if collapsed.contains(dir) { collapsed.remove(dir) } else { collapsed.insert(dir) } }
+        Divider()
+        Button("Reveal in Finder") { reveal(dir) }
+        Button("Copy path") { copy(dir) }
+        Button("Copy full path") { copy(url(dir).path) }
+        Divider()
+        Button("Ignore the folder \(dir)/") { askIgnoreFolder(dir, cs) }
+        Divider()
+        Button("Discard all in folder…", role: .destructive) { askDiscard(cs) }
     }
 
     @ViewBuilder func ignoreMenu(_ c: Change) -> some View {
@@ -506,12 +549,10 @@ struct RepoDetail: View {
                                 }
                                 rowActions(r.files, [c])
                             }
-                            .font(.callout).padding(.leading, CGFloat(r.depth) * 16).tag(c.id)
-                            .contextMenu {
-                                Button("Discard…", role: .destructive) { askDiscard([c]) }
-                                Divider()
-                                ignoreMenu(c)
-                            }
+                            .font(.callout).padding(.leading, CGFloat(r.depth) * 16)
+                            .contentShape(Rectangle())
+                            .contextMenu { fileMenu(c) }
+                            .tag(c.id)
                         } else {
                             let on = r.files.filter { ticked.contains($0) }.count
                             let isOpen = !collapsed.contains(dirOf(r))
@@ -531,6 +572,8 @@ struct RepoDetail: View {
                                 rowActions(r.files, st.changes.filter { r.files.contains($0.path) }, dir: dirOf(r))
                             }
                             .font(.callout).padding(.leading, CGFloat(r.depth) * 16)
+                            .contentShape(Rectangle())
+                            .contextMenu { dirMenu(dirOf(r), st.changes.filter { r.files.contains($0.path) }, r.files) }
                             .selectionDisabled()
                         }
                     }

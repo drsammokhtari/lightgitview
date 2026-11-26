@@ -21,6 +21,7 @@ sh scripts/make-sample.sh ~/sample-workspace   # real sample repos to try the ap
 | Name, bundle id, icon | `scripts/build-app.sh`, `branding/logo.png` |
 | Secret-looking file names | `Change.looksSecret` in `Git.swift` |
 | What the ignore menu offers (file, folder, extension) | `IgnoreScope` in `Git.swift`, `askIgnore` in `Views.swift` |
+| Right-click and "..." menus on changed files and folders | `fileMenu`, `dirMenu`, `rowActions` in `Views.swift` |
 | Delete repo (disk, and disk plus GitHub) | `Store.deleteRepo`, `Store.deleteRepoEverywhere`, `GitHubRemote` in `Git.swift`, `askDeleteRepo` and `askDeleteEverywhere` in `Views.swift` |
 | Pull request review (view, diff, comment, review, close) | `PRDetail` and `PRParser` in `Git.swift`, `Store.loadPR` and the `gh` calls, `PRSheet` in `Views.swift` |
 
