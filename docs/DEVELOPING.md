@@ -5,7 +5,7 @@ A light Mac app: pick a folder of git repos, click a repo, see status and change
 ## Build and run
 
 ```sh
-sh scripts/build-app.sh          # makes dist/LightGitView.app (about 1 MB)
+sh scripts/build-app.sh          # makes dist/LightGitView.app, universal: Apple Silicon + Intel (about 6 MB)
 open "dist/LightGitView.app"
 sh scripts/selftest.sh           # builds a sample workspace and checks the PRD's numbers
 sh scripts/make-sample.sh ~/sample-workspace   # real sample repos to try the app on

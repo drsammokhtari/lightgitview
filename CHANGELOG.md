@@ -1,5 +1,8 @@
 # Changelog
 
+## v1.3.1 · 2026-11-26
+- **Universal app:** the build now makes one app that runs natively on both Apple Silicon (arm64) and Intel (x86_64) Macs. `scripts/build-app.sh` builds each architecture and joins them with `lipo`.
+
 ## v1.3.0 · 2026-11-26
 - **Fixed: "Cannot fast-forward to multiple branches" on Pull.** The app's own background fetches overlapped `git pull` and left FETCH_HEAD with several entries, so the first Pull failed and the second worked. Pull now runs `git fetch` and then `git merge --ff-only` on the upstream branch by name; the app's fetches no longer write FETCH_HEAD; and fetch, pull and push never overlap on one repo.
 - **Everything stays up to date:** every action (Refresh, Pull, Push, Commit, Discard, Ignore, Save, switching or deleting a branch, closing a pull request, cloning) now re-reads the whole repo: the counts in the repo list, the file tree, the changes list, the open file and its diff, and the right-hand panel. The app also re-reads the selected repo when you come back to it from another app. A fetch that hangs is stopped after 30 seconds, and the status shows first, then is corrected after the fetch.

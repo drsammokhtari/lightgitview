@@ -4,8 +4,15 @@ set -eu
 here=$(cd "$(dirname "$0")/.." && pwd)
 name="LightGitView"
 app="$here/dist/$name.app"
-(cd "$here" && swift build -c release)
-bin=$(cd "$here" && swift build -c release --show-bin-path)/LightGitView
+# Universal binary: build each architecture, then merge with lipo (works with SwiftPM alone).
+for arch in arm64 x86_64; do
+  (cd "$here" && swift build -c release --triple "$arch-apple-macosx14.0" --scratch-path ".build-$arch")
+done
+bin=$(mktemp -d)/LightGitView
+lipo -create \
+  "$(cd "$here" && swift build -c release --triple arm64-apple-macosx14.0 --scratch-path .build-arm64 --show-bin-path)/LightGitView" \
+  "$(cd "$here" && swift build -c release --triple x86_64-apple-macosx14.0 --scratch-path .build-x86_64 --show-bin-path)/LightGitView" \
+  -output "$bin"
 rm -rf "$app"; mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 cp "$bin" "$app/Contents/MacOS/$name"
 set_dir=$(mktemp -d)/AppIcon.iconset; mkdir -p "$set_dir"
@@ -23,7 +30,7 @@ cat > "$app/Contents/Info.plist" <<PLIST
   <key>CFBundleIdentifier</key><string>com.thriveos.lightgitview</string>
   <key>CFBundleExecutable</key><string>$name</string>
   <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleShortVersionString</key><string>1.3.0</string>
+  <key>CFBundleShortVersionString</key><string>1.3.1</string>
   <key>CFBundleVersion</key><string>1</string>
   <key>CFBundleIconFile</key><string>AppIcon</string>
   <key>LSMinimumSystemVersion</key><string>14.0</string>
