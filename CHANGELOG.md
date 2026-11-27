@@ -1,5 +1,8 @@
 # Changelog
 
+## v1.4.0 · 2026-11-27
+- **Sync a workspace:** a Sync button above the repo list (also in the workspace menu and in the toolbar, ⇧⌘S) brings every repo of the workspace shown level with its remote. A repo that is behind is fast-forwarded, a repo that is ahead is pushed, and nothing is ever merged, rebased, stashed or force-pushed. A repo that could conflict is not touched and gets a tag in the sidebar (Would conflict, Diverged, Conflicts, No upstream, Detached, Fetch failed, Pull failed, Push failed); hover for the reason, which is also shown on the repo page. Local edits to files the remote did not change do not stop a pull. The tag clears on the next Sync or on a successful Pull or Push.
+
 ## v1.3.1 · 2026-11-26
 - **Universal app:** the build now makes one app that runs natively on both Apple Silicon (arm64) and Intel (x86_64) Macs. `scripts/build-app.sh` builds each architecture and joins them with `lipo`.
 

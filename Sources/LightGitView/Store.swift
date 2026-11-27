@@ -36,6 +36,8 @@ final class Store: ObservableObject {
     @Published var treeTruncated: Set<String> = []
     @Published var busy = false
     @Published var scanning = false
+    @Published var syncing = false
+    @Published var syncTags: [String: SyncTag] = [:]   // repos the last sync left alone, and why
     private var seen: [String: Set<String>] = [:]
 
     /// Set only by the headless self-test: use a throw-away folder and never write the saved settings.
@@ -343,7 +345,7 @@ final class Store: ObservableObject {
             self.pullNote = m.text
             return nil
         }
-        if let err { setError(err) } else { setInfo(lastLine(pullNote.isEmpty ? "Pulled." : pullNote)) }
+        if let err { setError(err) } else { syncTags[repo.id] = nil; setInfo(lastLine(pullNote.isEmpty ? "Pulled." : pullNote)) }
         await reload(repo)
     }
     private var pullNote = ""
@@ -354,8 +356,121 @@ final class Store: ObservableObject {
         var args = ["push"]
         if st?.upstream == nil, let b = st?.branch, !b.isEmpty { args = ["push", "-u", "origin", b] }
         let r = await gated(repo) { await Git.run(args, in: repo.url, timeout: 120) }
+        if r.ok { syncTags[repo.id] = nil }
         r.ok ? setInfo("Pushed.") : setError(r.text)
         await reload(repo)
+    }
+
+    // MARK: Sync a whole workspace
+
+    /// What one repo's sync did. A skipped repo was not changed at all.
+    enum SyncOutcome: Sendable, Equatable {
+        case upToDate
+        case pulled(Int)
+        case pushed(Int)
+        case skipped(SyncTag)
+    }
+    struct SyncTag: Sendable, Equatable {
+        let label: String    // short, shown in the sidebar
+        let detail: String   // the reason, shown on hover and on the repo page
+    }
+    struct SyncSummary: Equatable { var pulled = 0, pushed = 0, current = 0, skipped = 0, total = 0 }
+
+    /// Syncs the repos in the chosen workspace (or all repos): fast-forward pull, then push what is ahead.
+    func syncCurrent() async { _ = await syncRepos(repos, scope: currentName) }
+
+    /// A repo is only changed when that cannot conflict. Anything that could (a merge or rebase in progress, unmerged files,
+    /// diverged branches, local edits to files the remote also changed, no upstream, detached HEAD, a failed fetch) is left
+    /// exactly as it is and gets a tag in the sidebar.
+    func syncRepos(_ list: [Repo], scope: String) async -> SyncSummary {
+        guard !syncing else { return SyncSummary() }
+        syncing = true; busy = true
+        defer { syncing = false; busy = false }
+        for r in list { syncTags[r.id] = nil }
+        var sum = SyncSummary(); sum.total = list.count
+        var it = list.makeIterator()
+        await withTaskGroup(of: (Repo, SyncOutcome).self) { g in
+            var running = 0
+            while running < 4, let r = it.next() { g.addTask { (r, await self.syncOne(r)) }; running += 1 }
+            while let (r, o) = await g.next() {
+                switch o {
+                case .upToDate: sum.current += 1
+                case .pulled: sum.pulled += 1
+                case .pushed: sum.pushed += 1
+                case .skipped(let t): sum.skipped += 1; syncTags[r.id] = t
+                }
+                if let r2 = it.next() { g.addTask { (r2, await self.syncOne(r2)) } }
+            }
+        }
+        if let r = selectedRepo, list.contains(where: { $0.id == r.id }) { await reload(r) }
+        var parts: [String] = []
+        if sum.pulled > 0 { parts.append("pulled \(sum.pulled)") }
+        if sum.pushed > 0 { parts.append("pushed \(sum.pushed)") }
+        if sum.current > 0 { parts.append("\(sum.current) already up to date") }
+        var msg = "\(scope): synced \(sum.total - sum.skipped) of \(sum.total) repo\(sum.total == 1 ? "" : "s")" + (parts.isEmpty ? "." : " (" + parts.joined(separator: ", ") + ").")
+        if sum.skipped > 0 { msg += " \(sum.skipped) left untouched: see the tags in the list." }
+        setInfo(msg)
+        return sum
+    }
+
+    func syncOne(_ repo: Repo) async -> SyncOutcome {
+        let outcome: SyncOutcome = await gated(repo) {
+            let dir = repo.url
+            func skip(_ label: String, _ detail: String) -> SyncOutcome { .skipped(SyncTag(label: label, detail: detail)) }
+            // 1. Read-only checks first.
+            let gd = await Git.run(["rev-parse", "--absolute-git-dir"], in: dir)
+            if gd.ok {
+                let g = gd.out.trimmingCharacters(in: .whitespacesAndNewlines)
+                let busyFiles = ["MERGE_HEAD": "a merge", "rebase-merge": "a rebase", "rebase-apply": "a rebase", "CHERRY_PICK_HEAD": "a cherry-pick", "REVERT_HEAD": "a revert"]
+                for (f, what) in busyFiles where FileManager.default.fileExists(atPath: g + "/" + f) {
+                    return skip("Conflicts", "Left alone: \(what) is in progress. Finish or abort it first.")
+                }
+            }
+            await self.readStatus(repo)
+            guard let st0 = self.statuses[repo.id] else { return skip("Unreadable", "Left alone: git could not read this repo.") }
+            if st0.changes.contains(where: { $0.x == "U" || $0.y == "U" || ($0.x == "A" && $0.y == "A") || ($0.x == "D" && $0.y == "D") }) {
+                return skip("Conflicts", "Left alone: it has unresolved merge conflicts.")
+            }
+            let head = await Git.run(["symbolic-ref", "-q", "HEAD"], in: dir)
+            guard head.ok else { return skip("Detached", "Left alone: you are not on a branch.") }
+            let ref = head.out.trimmingCharacters(in: .whitespacesAndNewlines)
+            let rn = await Git.run(["for-each-ref", "--format=%(upstream:remotename)", ref], in: dir)
+            let remote = rn.out.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !remote.isEmpty else { return skip("No upstream", "Left alone: this branch has no upstream branch to sync with.") }
+            // 2. Fetch (never writes FETCH_HEAD), then look again.
+            let f = await Git.run(["fetch", "--quiet", "--prune", "--no-write-fetch-head", remote], in: dir, timeout: 60)
+            guard f.ok else { return skip("Fetch failed", "Left alone: \(self.lastLine(f.text))") }
+            await self.readStatus(repo)
+            guard let st = self.statuses[repo.id] else { return skip("Unreadable", "Left alone: git could not read this repo.") }
+            if st.ahead > 0 && st.behind > 0 {
+                return skip("Diverged", "Left alone: \(st.ahead) local and \(st.behind) remote commit\(st.behind == 1 ? "" : "s") not in each other. Merge or rebase it yourself.")
+            }
+            // 3. Behind: pull only when local edits do not touch the files the remote changed.
+            if st.behind > 0 {
+                let d = await Git.run(["diff", "--name-only", "-z", "HEAD", "@{upstream}"], in: dir)
+                let incoming = d.ok ? d.out.split(separator: "\0").map(String.init) : []
+                let local = st.changes.map(\.path)
+                let hits = incoming.filter { i in local.contains { l in l == i || l.hasPrefix(i + "/") || i.hasPrefix(l + "/") } }
+                if !d.ok { return skip("Unreadable", "Left alone: could not compare with the remote.") }
+                if !hits.isEmpty {
+                    let names = hits.prefix(3).joined(separator: ", ") + (hits.count > 3 ? " and \(hits.count - 3) more" : "")
+                    return skip("Would conflict", "Left alone: you changed \(names), and the remote changed \(hits.count == 1 ? "it" : "them") too. Commit or discard your edits, then pull.")
+                }
+                let m = await Git.run(["merge", "--ff-only", "@{upstream}"], in: dir)
+                guard m.ok else { return skip("Pull failed", "Left alone: \(self.lastLine(m.text))") }
+                await self.readStatus(repo)
+                return .pulled(st.behind)
+            }
+            // 4. Ahead: push.
+            if st.ahead > 0 {
+                let p = await Git.run(["push"], in: dir, timeout: 120)
+                guard p.ok else { return skip("Push failed", "Not pushed: \(self.lastLine(p.text))") }
+                await self.readStatus(repo)
+                return .pushed(st.ahead)
+            }
+            return .upToDate
+        }
+        return outcome
     }
 
     /// Throws away local changes in the files and in the list: new staged files are removed, other tracked files go back

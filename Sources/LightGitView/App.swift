@@ -109,6 +109,24 @@ struct LightGitViewApp: App {
                 let d = try? JSONDecoder().decode(PRDetail.self, from: Data(fixture.utf8))
                 let parts = PRParser.splitDiff("diff --git a/src/api.py b/src/api.py\n+x\ndiff --git a/README.md b/README.md\n-y\n")
                 print("pr files=\(d?.files.count ?? -1) comments=\(d?.comments.count ?? -1) reviews=\(d?.reviews.count ?? -1) open=\(d?.isOpen ?? false) diffs=\(parts.keys.sorted().joined(separator: ","))")
+                if let j = a.firstIndex(of: "--sync-ws"), j + 1 < a.count {
+                    let w2 = a[j + 1]
+                    let s2 = Store(); s2.roots = [w2]; s2.extraRepos = []
+                    await s2.scan()
+                    func tip(_ n: String) async -> String { await Git.run(["rev-parse", "HEAD"], in: URL(fileURLWithPath: w2 + "/" + n)).out.trimmingCharacters(in: .whitespacesAndNewlines) }
+                    func read(_ n: String, _ f: String) -> String { ((try? String(contentsOfFile: w2 + "/" + n + "/" + f, encoding: .utf8)) ?? "-").trimmingCharacters(in: .whitespacesAndNewlines) }
+                    var before: [String: String] = [:]
+                    for r in s2.repos { before[r.name] = await tip(r.name) }
+                    let sum = await s2.syncRepos(s2.repos, scope: "Test")
+                    let tags = s2.repos.compactMap { r in s2.syncTags[r.id].map { "\(r.name):\($0.label)" } }.sorted().joined(separator: ",")
+                    var untouched = true
+                    for n in ["s-overlap", "s-diverged", "s-conflict", "s-noup", "s-detached"] where await tip(n) != before[n] { untouched = false }
+                    let remoteTip = await Git.run(["rev-parse", "main"], in: URL(fileURLWithPath: w2 + "/.remotes/s-ahead.git")).out.trimmingCharacters(in: .whitespacesAndNewlines)
+                    let aheadPushed = remoteTip == (await tip("s-ahead"))
+                    let merging = FileManager.default.fileExists(atPath: w2 + "/s-conflict/.git/MERGE_HEAD")
+                    print("sync pulled=\(sum.pulled) pushed=\(sum.pushed) current=\(sum.current) skipped=\(sum.skipped) tags=\(tags)")
+                    print("sync-safe untouched=\(untouched) overlapKept=\(read("s-overlap", "p.txt") == "local edit") dirtyKept=\(read("s-dirty-ok", "q.txt") == "local edit" && read("s-dirty-ok", "r2.txt") == "two") behindPulled=\(read("s-behind", "r1.txt") == "one") aheadPushed=\(aheadPushed) stillMerging=\(merging) busy=\(s2.syncing)")
+                }
                 exit(0)
             }
         }

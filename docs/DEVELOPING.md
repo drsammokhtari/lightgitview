@@ -27,6 +27,7 @@ sh scripts/make-sample.sh ~/sample-workspace   # real sample repos to try the ap
 | Deleting branches, closing pull requests from the panel | `Store.protectedNames`, `branchFacts`, `deleteLocalBranch`, `deleteRemoteBranch`, `askDeleteBranch`, `askClosePR` |
 | Editing a file (open, edit, save) | `Store.fileForEditing`, `Store.saveFile`, `openFile` and `saveEdit` in `Views.swift` |
 | File tree sidebar | `FileNode` and `TreeBuilder` in `Git.swift`, `Store.loadTree`, `FileTreePane` in `Views.swift` |
+| Sync a workspace (pull, push, tag risky repos) | `Store.syncRepos`, `Store.syncOne`, `SyncTag` in `Store.swift`; `SidebarRow` tag and the Sync buttons in `Views.swift`; `scripts/make-sync-sample.sh` builds the nine test cases |
 | Clone repo | `Store.cloneRepo`, `CloneSource` in `Git.swift`, `CloneSheet` in `Views.swift` |
 | Delete repo (disk, and disk plus GitHub) | `Store.deleteRepo`, `Store.deleteRepoEverywhere`, `GitHubRemote` in `Git.swift`, `askDeleteRepo` and `askDeleteEverywhere` in `Views.swift` |
 | Pull request review (view, diff, comment, review, close) | `PRDetail` and `PRParser` in `Git.swift`, `Store.loadPR` and the `gh` calls, `PRSheet` in `Views.swift` |
@@ -37,6 +38,7 @@ sh scripts/make-sample.sh ~/sample-workspace   # real sample repos to try the ap
 - A folder is listed as a repo when it holds a `.git` entry (the PRD named `git rev-parse`; that returns true inside any repo's sub-folder, so `.git` is the safer test).
 - Commit: the app clears the index, adds only the ticked files, then commits. Push is held while the repo is behind; Pull is fast-forward-only.
 - Repos folders, workspaces and the selected workspace are remembered; nothing else is stored.
+- Sync never merges, rebases, stashes or force-pushes. `syncOne` leaves a repo alone, and tags it, unless a fast-forward pull or a plain push cannot conflict; the checks run before anything changes. Add any new risk to `syncOne` and a case to `make-sync-sample.sh`.
 - Ignoring a tracked file also runs `git rm --cached` after a yes, because a .gitignore does not affect files git already tracks.
 - Delete from disk moves the folder to the Trash instead of removing it. Delete from disk and GitHub runs `gh repo delete owner/repo --yes` first, asks for the name to be typed, and leaves the folder alone if GitHub refuses. It never passes `--accept-cascading-deletion-of-private-forks`. Untracked files and folders that you discard go to the Trash too.
 - GitHub cannot delete a pull request, so the app closes it. Pull request features need the GitHub CLI (`gh`), signed in; the rest of the app needs only `git`.

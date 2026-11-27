@@ -4,7 +4,9 @@ set -eu
 here=$(cd "$(dirname "$0")/.." && pwd)
 ws=$(mktemp -d)/sample-workspace
 sh "$here/scripts/make-sample.sh" "$ws" >/dev/null
-out=$(cd "$here" && swift run -c release LightGitView --selftest "$ws" 2>/dev/null)
+sws=$(mktemp -d)/sync-workspace
+sh "$here/scripts/make-sync-sample.sh" "$sws" >/dev/null
+out=$(cd "$here" && swift run -c release LightGitView --selftest "$ws" --sync-ws "$sws" 2>/dev/null)
 echo "$out"
 echo "$out" | grep -q 'alpha-api branch=main upstream=origin/main ahead=1 behind=0 changed=2 untracked=2 added=14 deleted=3' || { echo "FAIL alpha-api"; exit 1; }
 echo "$out" | grep -q 'beta-site branch=dev upstream=origin/dev ahead=0 behind=2 changed=2 untracked=0 added=5 deleted=45' || { echo "FAIL beta-site"; exit 1; }
@@ -21,4 +23,6 @@ echo "$out" | grep -q 'edit read=true why=none missing=true save=ok added=12->13
 echo "$out" | grep -q 'branches protected=true unmerged=1 safeRefused=true force=ok local=ok remote=ok gone=true' || { echo "FAIL branch delete"; exit 1; }
 echo "$out" | grep -q 'reload tree=true status=true revision=1 timeout=124' || { echo "FAIL reload"; exit 1; }
 echo "$out" | grep -q 'pull errors=0 behind=0 banner=ok' || { echo "FAIL pull"; exit 1; }
+echo "$out" | grep -q 'sync pulled=2 pushed=1 current=1 skipped=5 tags=s-conflict:Conflicts,s-detached:Detached,s-diverged:Diverged,s-noup:No upstream,s-overlap:Would conflict' || { echo "FAIL sync"; exit 1; }
+echo "$out" | grep -q 'sync-safe untouched=true overlapKept=true dirtyKept=true behindPulled=true aheadPushed=true stillMerging=true busy=false' || { echo "FAIL sync safety"; exit 1; }
 echo "selftest ok"

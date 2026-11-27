@@ -44,6 +44,12 @@ struct ContentView: View {
                     .help("Show or hide branches, remote changes and pull requests")
             }
             ToolbarItem {
+                Button { Task { await store.syncCurrent() } } label: { Label(store.syncing ? "Syncing…" : "Sync", systemImage: "arrow.triangle.2.circlepath").labelStyle(.titleAndIcon) }
+                    .disabled(store.syncing || store.repos.isEmpty)
+                    .help("Sync every repo in \(store.currentName): pull what is behind, push what is ahead. A repo that could conflict is left untouched and tagged.")
+                    .keyboardShortcut("s", modifiers: [.command, .shift])
+            }
+            ToolbarItem {
                 Button { Task { await store.scan() } } label: { Label("Refresh all", systemImage: "arrow.clockwise").labelStyle(.titleAndIcon) }
                     .help("Rescan the repos folders and refresh every repo (fetches from the remote)")
                     .keyboardShortcut("r", modifiers: .command)
@@ -69,11 +75,20 @@ struct Sidebar: View {
     @State private var showWorkspaces = false
     var body: some View {
         VStack(spacing: 0) {
-            workspaceMenu.padding(.horizontal, 12).padding(.vertical, 8)
+            HStack(spacing: 6) {
+                workspaceMenu
+                Button { Task { await store.syncCurrent() } } label: {
+                    if store.syncing { ProgressView().controlSize(.small) } else { Image(systemName: "arrow.triangle.2.circlepath") }
+                }
+                .buttonStyle(.borderless)
+                .disabled(store.syncing || store.repos.isEmpty)
+                .help("Sync \(store.currentName): pull what is behind, push what is ahead. A repo that could conflict is left untouched and tagged.")
+                .accessibilityLabel("Sync \(store.currentName)")
+            }.padding(.horizontal, 12).padding(.vertical, 8)
             List(selection: $store.selected) {
                 Section("\(store.repos.count) repo\(store.repos.count == 1 ? "" : "s")") {
                     ForEach(store.repos) { r in
-                        SidebarRow(repo: r, st: store.statuses[r.id]).tag(r.id)
+                        SidebarRow(repo: r, st: store.statuses[r.id], tag: store.syncTags[r.id]).tag(r.id)
                             .contextMenu { repoMenu(r) }
                     }
                 }
@@ -96,6 +111,8 @@ struct Sidebar: View {
                 Button { store.current = w.id } label: { Label("\(w.name) (\(store.count(in: w)))", systemImage: store.current == w.id ? "checkmark" : "folder") }
             }
             Divider()
+            Button { Task { await store.syncCurrent() } } label: { Label("Sync “\(store.currentName)”", systemImage: "arrow.triangle.2.circlepath") }
+                .disabled(store.syncing || store.repos.isEmpty)
             Button("New workspace…") { if let n = promptText("New workspace", "Name, for example Work", "") { store.newWorkspace(named: n) } }
             Button("Manage workspaces…") { showWorkspaces = true }
             if let w = store.currentWorkspace {
@@ -246,9 +263,17 @@ func promptText(_ title: String, _ message: String, _ value: String) -> String? 
 struct SidebarRow: View {
     let repo: Repo
     let st: RepoStatus?
+    var tag: Store.SyncTag? = nil
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
             Text(repo.name).lineLimit(1)
+            if let tag {
+                Label(tag.label, systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption2.weight(.semibold)).foregroundStyle(.orange)
+                    .padding(.horizontal, 6).padding(.vertical, 1)
+                    .background(Color.orange.opacity(0.15), in: Capsule())
+                    .help(tag.detail)
+            }
             if let st {
                 Text(st.branch).font(.caption).foregroundStyle(.secondary).lineLimit(1)
                 HStack(spacing: 8) {
@@ -491,6 +516,10 @@ struct RepoDetail: View {
         HStack(spacing: 12) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(repo.name).font(.title3.weight(.semibold))
+                if let t = store.syncTags[repo.id] {
+                    Label("\(t.label): \(t.detail)", systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption).foregroundStyle(.orange).lineLimit(2)
+                }
                 HStack(spacing: 8) {
                     Text(st.branch.isEmpty ? "…" : st.branch)
                     if let u = st.upstream { Text("→ \(u)").foregroundStyle(.secondary) } else { Text("no upstream").foregroundStyle(.secondary) }
