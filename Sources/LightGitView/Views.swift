@@ -46,7 +46,7 @@ struct ContentView: View {
             ToolbarItem {
                 Button { Task { await store.syncCurrent() } } label: { Label(store.syncing ? "Syncing…" : "Sync", systemImage: "arrow.triangle.2.circlepath").labelStyle(.titleAndIcon) }
                     .disabled(store.syncing || store.repos.isEmpty)
-                    .help("Sync every repo in \(store.currentName): pull what is behind, push what is ahead. A repo that could conflict is left untouched and tagged.")
+                    .help("Sync every repo in \(store.currentName): pull what is behind, push the commits you already made. It never commits files. A repo that could conflict is left untouched and tagged.")
                     .keyboardShortcut("s", modifiers: [.command, .shift])
             }
             ToolbarItem {
@@ -82,7 +82,7 @@ struct Sidebar: View {
                 }
                 .buttonStyle(.borderless)
                 .disabled(store.syncing || store.repos.isEmpty)
-                .help("Sync \(store.currentName): pull what is behind, push what is ahead. A repo that could conflict is left untouched and tagged.")
+                .help("Sync \(store.currentName): pull what is behind, push the commits you already made. It never commits files. A repo that could conflict is left untouched and tagged.")
                 .accessibilityLabel("Sync \(store.currentName)")
             }.padding(.horizontal, 12).padding(.vertical, 8)
             List(selection: $store.selected) {
