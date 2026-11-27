@@ -25,10 +25,12 @@ struct ContentView: View {
         }
         .sheet(isPresented: $showRoots) { RootsSheet() }
         .sheet(isPresented: $store.showClone) { CloneSheet().environmentObject(store) }
+        .sheet(isPresented: $store.showCreate) { CreateRepoSheet().environmentObject(store) }
         .toolbar {
             ToolbarItem(placement: .navigation) {
                 Menu {
                     Button("Clone repo…") { store.showClone = true }
+                    Button("Create repo…") { store.showCreate = true }
                     Divider()
                     Button("Add repo or repos folder…") { store.addPath() }
                     Button("Manage repos folders…") { showRoots = true }
@@ -123,6 +125,7 @@ struct Sidebar: View {
             }
             Divider()
             Button("Clone repo…") { store.showClone = true }
+            Button("Create repo…") { store.showCreate = true }
             Button("Add repo or repos folder…") { store.addPath() }
             Button("Manage repos folders…") { showRoots = true }
         } label: {
@@ -1088,6 +1091,115 @@ struct CloneSheet: View {
         Task {
             let err = await store.cloneRepo(source: source, parent: parent, folder: folder, branch: branch, workspaceIDs: Array(picked), newWorkspace: newWorkspace)
             cloning = false
+            if let err { error = err } else { dismiss() }
+        }
+    }
+}
+
+
+/// Create a new repo: a local folder with git, and the same repo on GitHub as its origin.
+struct CreateRepoSheet: View {
+    @EnvironmentObject var store: Store
+    @Environment(\.dismiss) var dismiss
+    @State private var o = NewRepo()
+    @State private var owners: [String] = []
+    @State private var ownersNote: String?
+    @State private var ignores: [String] = NewRepo.fallbackGitignores
+    @State private var picked = Set<String>()
+    @State private var newWorkspace = ""
+    @State private var creating = false
+    @State private var error: String?
+
+    var parentOptions: [String] { store.roots + (store.roots.contains(o.parent) || o.parent.isEmpty ? [] : [o.parent]) }
+    var nameProblem: String? { o.name.isEmpty ? nil : NewRepo.problem(name: o.name) }
+    var ready: Bool { !o.name.isEmpty && nameProblem == nil && !o.owner.isEmpty && !o.parent.isEmpty && !creating }
+    var targetExists: Bool { !o.name.isEmpty && !o.parent.isEmpty && FileManager.default.fileExists(atPath: store.cloneDestination(parent: o.parent, folder: o.name).path) }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Create a repo").font(.title3.weight(.semibold))
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Name").font(.callout.weight(.semibold))
+                HStack {
+                    Picker("", selection: $o.owner) { ForEach(owners, id: \.self) { Text($0).tag($0) } }
+                        .labelsHidden().fixedSize().accessibilityLabel("GitHub account")
+                    Text("/").foregroundStyle(.secondary)
+                    TextField("repo-name", text: $o.name).textFieldStyle(.roundedBorder).accessibilityLabel("Repo name")
+                }
+                if let p = nameProblem { Text(p).font(.caption).foregroundStyle(Color.red) }
+                else if targetExists { Text("A folder with this name already exists there.").font(.caption).foregroundStyle(Color.red) }
+                else if let n = ownersNote { Text(n).font(.caption).foregroundStyle(Color.red) }
+                TextField("Description (optional)", text: $o.description).textFieldStyle(.roundedBorder).accessibilityLabel("Description")
+            }
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Visibility").font(.callout.weight(.semibold))
+                Picker("", selection: $o.isPrivate) {
+                    Text("Private: only you and people you add").tag(true)
+                    Text("Public: anyone on the internet can see it").tag(false)
+                }.pickerStyle(.radioGroup).labelsHidden().accessibilityLabel("Visibility")
+            }
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Create in").font(.callout.weight(.semibold))
+                HStack {
+                    Picker("", selection: $o.parent) { ForEach(parentOptions, id: \.self) { Text($0).tag($0) } }.labelsHidden().frame(maxWidth: .infinity)
+                    Button("Choose…") { chooseParent() }
+                }
+                if !o.parent.isEmpty && !o.name.isEmpty { Text("Folder: \(store.cloneDestination(parent: o.parent, folder: o.name).path)").font(.caption).foregroundStyle(.secondary).textSelection(.enabled) }
+            }
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Starter files").font(.callout.weight(.semibold))
+                HStack(spacing: 16) {
+                    Toggle("README", isOn: $o.readme)
+                    Text("First branch").foregroundStyle(.secondary)
+                    TextField("main", text: $o.branch).textFieldStyle(.roundedBorder).frame(width: 110).accessibilityLabel("First branch name")
+                }
+                HStack {
+                    Picker(".gitignore", selection: $o.gitignore) { Text("None").tag(""); ForEach(ignores, id: \.self) { Text($0).tag($0) } }.frame(width: 260)
+                    Picker("License", selection: $o.license) { Text("None").tag(""); ForEach(NewRepo.licenses, id: \.key) { Text($0.name).tag($0.key) } }.frame(width: 220)
+                }
+            }
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Workspaces").font(.callout.weight(.semibold))
+                if store.workspaces.isEmpty { Text("No workspaces yet. Name one below to create it.").font(.caption).foregroundStyle(.secondary) }
+                ForEach(store.workspaces) { w in
+                    Toggle(w.name, isOn: Binding(get: { picked.contains(w.id) }, set: { on in if on { picked.insert(w.id) } else { picked.remove(w.id) } }))
+                }
+                TextField("New workspace (optional)", text: $newWorkspace).textFieldStyle(.roundedBorder).frame(maxWidth: 280)
+            }
+            if let error { Text(error).foregroundStyle(Color.red).font(.callout).textSelection(.enabled) }
+            HStack {
+                if creating { ProgressView().controlSize(.small); Text("Creating…").foregroundStyle(.secondary) }
+                Spacer()
+                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction).disabled(creating)
+                Button("Create and push") { create() }.keyboardShortcut(.defaultAction).buttonStyle(.borderedProminent).disabled(!ready || targetExists)
+            }
+        }
+        .padding(20).frame(width: 600)
+        .task {
+            if o.parent.isEmpty { o.parent = store.roots.first ?? NSHomeDirectory() }
+            if let w = store.currentWorkspace { picked.insert(w.id) }
+            let (list, note) = await store.githubOwners()
+            owners = list; ownersNote = note
+            if o.owner.isEmpty { o.owner = list.first ?? "" }
+            ignores = await store.gitignoreTemplates()
+        }
+    }
+
+    func chooseParent() {
+        let p = NSOpenPanel()
+        p.canChooseDirectories = true; p.canChooseFiles = false; p.canCreateDirectories = true
+        p.prompt = "Use folder"; p.message = "Choose the folder to create the repo in"
+        if p.runModal() == .OK, let u = p.url { o.parent = u.path }
+    }
+
+    func create() {
+        o.name = o.name.trimmingCharacters(in: .whitespaces)
+        o.branch = o.branch.trimmingCharacters(in: .whitespaces)
+        if !o.isPrivate && !confirm("Make \(o.owner)/\(o.name) public?", "Anyone on the internet will be able to see this repo and its code.", button: "Create public repo") { return }
+        creating = true; error = nil
+        Task {
+            let err = await store.createRepo(o, workspaceIDs: Array(picked), newWorkspace: newWorkspace)
+            creating = false
             if let err { error = err } else { dismiss() }
         }
     }

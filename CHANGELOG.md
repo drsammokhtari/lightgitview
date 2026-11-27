@@ -1,5 +1,8 @@
 # Changelog
 
+## v1.5.0 · 2026-11-27
+- **Create repo…** (the + button or the workspace menu, next to Clone): makes a new local folder under the folder you pick and the same repo on GitHub as its `origin`. You choose the name, the GitHub account or organisation, Private (the default) or Public (asks to confirm), a description, the first branch name, and optionally a README, a .gitignore template and a license. The app runs `git init`, makes the first commit, then `gh repo create --push`. A name that already exists on GitHub or as a folder is refused before anything is made; if GitHub refuses, the new folder is removed; if only the first push fails, the folder is kept and the message says so. The repo joins the workspaces you tick. Needs the GitHub CLI signed in.
+
 ## v1.4.1 · 2026-11-27
 - Sync's button hover text now says that it pushes only commits you already made and never commits files. No behaviour change: Sync has never committed anything.
 

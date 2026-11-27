@@ -46,6 +46,17 @@ struct LightGitViewApp: App {
                 let dup = await s.cloneRepo(source: remote, parent: tmpParent, folder: "alpha-copy", workspaceIDs: [])
                 let bad = await s.cloneRepo(source: "/no/such/remote.git", parent: tmpParent, folder: "nope", workspaceIDs: [])
                 print("clone err=\(cerr ?? "none") listed=\(s.allRepos.contains { $0.name == "alpha-copy" }) inWorkspace=\(inWs) duplicate=\(dup != nil) failedLeftover=\(FileManager.default.fileExists(atPath: tmpParent + "/nope")) folder=\(CloneSource.folderName(from: "git@github.com:me/app.git")) short=\(CloneSource.isShorthand("me/app")) url=\(CloneSource.isShorthand("https://github.com/me/app"))")
+                var mk = NewRepo(); mk.name = "fresh-app"; mk.description = "A test"; mk.parent = tmpParent; mk.branch = "trunk"
+                let mkErr = await s.makeLocalRepo(mk, gitignoreText: ".DS_Store\n", licenseText: NewRepo.fillLicense("Copyright (c) [year] [fullname]", year: 2026, holder: "Sam"))
+                let mkDir = tmpParent + "/fresh-app"
+                let mkBranch = await Git.run(["rev-parse", "--abbrev-ref", "HEAD"], in: URL(fileURLWithPath: mkDir)).out.trimmingCharacters(in: .whitespacesAndNewlines)
+                let mkCount = await Git.run(["rev-list", "--count", "HEAD"], in: URL(fileURLWithPath: mkDir)).out.trimmingCharacters(in: .whitespacesAndNewlines)
+                let mkFiles = await Git.run(["ls-files"], in: URL(fileURLWithPath: mkDir)).out.split(separator: "\n").joined(separator: ",")
+                let mkDup = await s.makeLocalRepo(mk, gitignoreText: "", licenseText: "")
+                var empty = mk; empty.name = "bare-app"; empty.readme = false
+                let emptyErr = await s.makeLocalRepo(empty, gitignoreText: "", licenseText: "")
+                let emptyCount = await Git.run(["rev-list", "--count", "HEAD"], in: URL(fileURLWithPath: tmpParent + "/bare-app")).out.trimmingCharacters(in: .whitespacesAndNewlines)
+                print("create err=\(mkErr ?? "none") branch=\(mkBranch) commits=\(mkCount) files=\(mkFiles) duplicate=\(mkDup != nil) empty=\(emptyErr ?? "none")/\(emptyCount) names=\(NewRepo.problem(name: "ok-name_1.x") ?? "ok")|\(NewRepo.problem(name: "bad name") != nil)|\(NewRepo.problem(name: "..") != nil)|\(NewRepo.problem(name: "") != nil) license=\(NewRepo.fillLicense("[year] [fullname]", year: 2026, holder: "Sam"))")
                 let cp = tmpParent + "/alpha-copy"
                 let cr = Repo(url: URL(fileURLWithPath: cp))
                 let id = ["-c", "user.name=T", "-c", "user.email=t@example.com"]

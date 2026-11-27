@@ -4,7 +4,7 @@
 
 **Every repo, one light window.** A small Mac app that shows all your git repos in one place, with what changed in each, and lets you commit, pull and push without opening a terminal.
 
-![version](https://img.shields.io/badge/version-1.4.1-0F766E) ![platform](https://img.shields.io/badge/macOS-14%2B-0F766E) ![licence](https://img.shields.io/badge/licence-MIT-0F766E)
+![version](https://img.shields.io/badge/version-1.5.0-0F766E) ![platform](https://img.shields.io/badge/macOS-14%2B-0F766E) ![licence](https://img.shields.io/badge/licence-MIT-0F766E)
 
 <p align="center"><img src="docs/screenshot.png" width="900" alt="LightGitView showing a repo's changed files as a folder tree, a commit message ready, and the side panel with branches and commits to push"></p>
 
@@ -34,6 +34,7 @@ A 2-minute tour, with captions: install, first launch, the repo list, commit, pu
 - Delete a branch locally, on origin or both from the side panel, with checks first (main, master, the default and the current branch are protected); close a pull request from its row.
 - Click a file to read its diff or edit it right there (⌘S to save).
 - Click a repo to see its folders and files in a second sidebar; changed files are marked, and a click shows the diff or the file.
+- **Create a repo** (+ menu → Create repo…): name, GitHub account or organisation, private or public, folder, first branch, optional README, .gitignore and license. It makes the local folder, commits, creates the repo on GitHub and pushes, so `origin` is set. Needs the GitHub CLI signed in.
 - Clone a repo from a URL, owner/name or your GitHub list, choosing its folder and workspaces.
 - Pick a folder and see every git repo in it, with its branch and how many changes, commits to push and commits to pull.
 - Open a repo to see its changed files as a folder tree. Tick the files you want, write a message, commit.

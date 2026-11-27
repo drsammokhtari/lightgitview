@@ -30,6 +30,7 @@ final class Store: ObservableObject {
     @Published var banner: Banner?
     @Published var side: [String: SideInfo] = [:]
     @Published var showClone = false
+    @Published var showCreate = false
     @Published var revision: [String: Int] = [:]   // bumps after every full reload, so open panes can re-read
     @Published var focusRequest: String?   // a file the tree asks the repo page to show
     @Published var trees: [String: [FileNode]] = [:]
@@ -665,6 +666,13 @@ final class Store: ObservableObject {
             try? FileManager.default.removeItem(at: dest)   // a failed clone can leave a half-made folder; it is ours, so remove it
             return r.text
         }
+        await register(dest, parent: parent, workspaceIDs: workspaceIDs, newWorkspace: newWorkspace)
+        setInfo("Cloned \(name) into \(parent).")
+        return nil
+    }
+
+    /// Lists a new local repo: remembers its folder when it is outside the repos folders, adds it to the workspaces, selects it.
+    private func register(_ dest: URL, parent: String, workspaceIDs: [String], newWorkspace: String?) async {
         if !roots.contains(parent) && !extraRepos.contains(dest.path) { extraRepos.append(dest.path) }
         var ids = workspaceIDs
         if let n = newWorkspace?.trimmingCharacters(in: .whitespaces), !n.isEmpty {
@@ -674,7 +682,105 @@ final class Store: ObservableObject {
         await scan()
         if let cw = currentWorkspace, !cw.repos.contains(dest.path) { current = nil }
         selected = dest.path
-        setInfo("Cloned \(name) into \(parent).")
+    }
+
+    // MARK: create a new repo (local folder + GitHub origin)
+    /// The GitHub accounts a new repo can belong to: your login first, then your organisations. Needs gh, signed in.
+    func githubOwners() async -> (owners: [String], note: String?) {
+        guard let gh = ghPath else { return ([], "Install the GitHub CLI (brew install gh) to create repos on GitHub.") }
+        let home = URL(fileURLWithPath: NSHomeDirectory())
+        let me = await Git.exec(gh, ["api", "user", "--jq", ".login"], in: home, timeout: 20)
+        guard me.ok, !me.out.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return ([], "Run gh auth login in Terminal, then reopen this window.")
+        }
+        var owners = [me.out.trimmingCharacters(in: .whitespacesAndNewlines)]
+        let orgs = await Git.exec(gh, ["api", "user/orgs", "--jq", ".[].login"], in: home, timeout: 20)
+        if orgs.ok { owners += orgs.out.split(separator: "\n").map { String($0).trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty } }
+        return (owners, nil)
+    }
+
+    /// The .gitignore templates GitHub offers (Swift, Python, Node…), for the picker.
+    func gitignoreTemplates() async -> [String] {
+        guard let gh = ghPath else { return NewRepo.fallbackGitignores }
+        let r = await Git.exec(gh, ["api", "gitignore/templates", "--jq", ".[]"], in: URL(fileURLWithPath: NSHomeDirectory()), timeout: 20)
+        let l = r.ok ? r.out.split(separator: "\n").map(String.init) : []
+        return l.isEmpty ? NewRepo.fallbackGitignores : l
+    }
+
+    /// Makes `parent/name` with git init, the optional README, .gitignore and LICENSE, and a first commit. No network.
+    /// Returns an error text or nil. On any failure the folder is removed, because it is the one this call made.
+    func makeLocalRepo(_ o: NewRepo, gitignoreText: String, licenseText: String) async -> String? {
+        let dest = cloneDestination(parent: o.parent, folder: o.name)
+        let fm = FileManager.default
+        do { try fm.createDirectory(at: dest, withIntermediateDirectories: false) } catch { return error.localizedDescription }
+        func fail(_ t: String) -> String { try? fm.removeItem(at: dest); return t }
+        let branch = o.branch.isEmpty ? "main" : o.branch
+        let ini = await Git.run(["init", "-q", "-b", branch], in: dest)
+        guard ini.ok else { return fail(ini.text) }
+        do {
+            if o.readme {
+                let desc = o.description.trimmingCharacters(in: .whitespacesAndNewlines)
+                try ("# \(o.name)\n" + (desc.isEmpty ? "" : "\n\(desc)\n")).write(to: dest.appendingPathComponent("README.md"), atomically: true, encoding: .utf8)
+            }
+            if !gitignoreText.isEmpty { try gitignoreText.write(to: dest.appendingPathComponent(".gitignore"), atomically: true, encoding: .utf8) }
+            if !licenseText.isEmpty { try licenseText.write(to: dest.appendingPathComponent("LICENSE"), atomically: true, encoding: .utf8) }
+        } catch { return fail(error.localizedDescription) }
+        let add = await Git.run(["add", "-A"], in: dest)
+        guard add.ok else { return fail(add.text) }
+        // --allow-empty so a repo with no starter files still has a commit to push.
+        let c = await Git.run(["commit", "-q", "--allow-empty", "-m", "Initial commit"], in: dest)
+        guard c.ok else {
+            let t = c.text
+            return fail(t.lowercased().contains("identity") || t.lowercased().contains("user.name") || t.lowercased().contains("user.email")
+                ? "Git does not know who you are. In Terminal run:\n  git config --global user.name \"Your Name\"\n  git config --global user.email \"you@example.com\"" : t)
+        }
+        return nil
+    }
+
+    /// Creates a new repo: the local folder `parent/name` with git, then the same repo on GitHub as `origin`, pushed.
+    /// Returns an error text or nil.
+    func createRepo(_ o: NewRepo, workspaceIDs: [String], newWorkspace: String? = nil) async -> String? {
+        guard let gh = ghPath else { return "Creating a repo on GitHub needs the GitHub CLI (gh). Install it with brew install gh." }
+        if let bad = NewRepo.problem(name: o.name) { return bad }
+        guard !o.owner.isEmpty else { return "Choose the GitHub account that will own the repo." }
+        var isDir: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: o.parent, isDirectory: &isDir), isDir.boolValue else { return "The folder \(o.parent) does not exist." }
+        let dest = cloneDestination(parent: o.parent, folder: o.name)
+        guard !FileManager.default.fileExists(atPath: dest.path) else { return "\(dest.path) already exists. Choose another name or folder." }
+        busy = true; defer { busy = false }
+        let home = URL(fileURLWithPath: NSHomeDirectory())
+        // Everything that can fail without touching disk or GitHub comes first.
+        let exists = await Git.exec(gh, ["api", "repos/\(o.owner)/\(o.name)", "--jq", ".full_name"], in: home, timeout: 20)
+        if exists.ok { return "\(o.owner)/\(o.name) already exists on GitHub. Choose another name." }
+        var ignoreText = "", licenseText = ""
+        if !o.gitignore.isEmpty {
+            let r = await Git.exec(gh, ["api", "gitignore/templates/\(o.gitignore)", "-H", "Accept: application/vnd.github.raw"], in: home, timeout: 30)
+            guard r.ok else { return "Could not get the \(o.gitignore) .gitignore template.\n" + r.text }
+            ignoreText = r.out
+        }
+        if !o.license.isEmpty {
+            let r = await Git.exec(gh, ["api", "licenses/\(o.license)", "--jq", ".body"], in: home, timeout: 30)
+            guard r.ok else { return "Could not get the license text.\n" + r.text }
+            let who = await Git.run(["config", "--global", "user.name"], in: home).out.trimmingCharacters(in: .whitespacesAndNewlines)
+            licenseText = NewRepo.fillLicense(r.out, year: Calendar.current.component(.year, from: Date()), holder: who.isEmpty ? o.owner : who)
+        }
+        if let err = await makeLocalRepo(o, gitignoreText: ignoreText, licenseText: licenseText) { return err }
+        var args = ["repo", "create", "\(o.owner)/\(o.name)", o.isPrivate ? "--private" : "--public", "--source", ".", "--remote", "origin", "--push"]
+        let desc = o.description.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !desc.isEmpty { args += ["--description", desc] }
+        let r = await Git.exec(gh, args, in: dest, timeout: 120)
+        if !r.ok {
+            let remote = await Git.run(["remote", "get-url", "origin"], in: dest)
+            if remote.ok {
+                // GitHub made the repo but the push failed: keep the local folder so nothing is lost, and say so.
+                await register(dest, parent: o.parent, workspaceIDs: workspaceIDs, newWorkspace: newWorkspace)
+                return "\(o.owner)/\(o.name) was created on GitHub, but the first push failed. The local folder is kept at \(dest.path); push it from the repo page.\n" + r.text
+            }
+            try? FileManager.default.removeItem(at: dest)   // nothing reached GitHub, and the folder is the one this call made
+            return r.text.lowercased().contains("scope") ? r.text + "\n\nGitHub needs permission to create repos. In Terminal run: gh auth refresh -s repo" : r.text
+        }
+        await register(dest, parent: o.parent, workspaceIDs: workspaceIDs, newWorkspace: newWorkspace)
+        setInfo("Created \(o.owner)/\(o.name) (\(o.isPrivate ? "private" : "public")) in \(o.parent).")
         return nil
     }
 

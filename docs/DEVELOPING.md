@@ -29,6 +29,7 @@ sh scripts/make-sample.sh ~/sample-workspace   # real sample repos to try the ap
 | File tree sidebar | `FileNode` and `TreeBuilder` in `Git.swift`, `Store.loadTree`, `FileTreePane` in `Views.swift` |
 | Sync a workspace (pull, push, tag risky repos) | `Store.syncRepos`, `Store.syncOne`, `SyncTag` in `Store.swift`; `SidebarRow` tag and the Sync buttons in `Views.swift`; `scripts/make-sync-sample.sh` builds the nine test cases |
 | Clone repo | `Store.cloneRepo`, `CloneSource` in `Git.swift`, `CloneSheet` in `Views.swift` |
+| Create repo (local folder + GitHub origin) | `Store.createRepo`, `makeLocalRepo`, `githubOwners`, `NewRepo` in `Git.swift`, `CreateRepoSheet` in `Views.swift` |
 | Delete repo (disk, and disk plus GitHub) | `Store.deleteRepo`, `Store.deleteRepoEverywhere`, `GitHubRemote` in `Git.swift`, `askDeleteRepo` and `askDeleteEverywhere` in `Views.swift` |
 | Pull request review (view, diff, comment, review, close) | `PRDetail` and `PRParser` in `Git.swift`, `Store.loadPR` and the `gh` calls, `PRSheet` in `Views.swift` |
 

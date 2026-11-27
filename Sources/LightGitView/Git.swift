@@ -317,6 +317,43 @@ struct GitHubRepoItem: Decodable, Identifiable, Hashable {
     var id: String { nameWithOwner }
 }
 
+/// What the Create repo sheet collects.
+struct NewRepo {
+    var name = ""
+    var description = ""
+    var isPrivate = true
+    var owner = ""
+    var parent = ""
+    var branch = "main"
+    var readme = true
+    var gitignore = ""   // a GitHub template name, "" for none
+    var license = ""     // a GitHub license key such as "mit", "" for none
+
+    static let fallbackGitignores = ["Swift", "Python", "Node", "Go", "Rust", "Java", "Ruby", "C++", "Unity"]
+    /// The licenses offered; keys are GitHub's license ids.
+    static let licenses: [(key: String, name: String)] = [
+        ("mit", "MIT"), ("apache-2.0", "Apache 2.0"), ("gpl-3.0", "GPL 3.0"), ("bsd-3-clause", "BSD 3-Clause"), ("mpl-2.0", "MPL 2.0"), ("unlicense", "Unlicense")
+    ]
+
+    /// Why a name cannot be used for a GitHub repo and a folder, or nil when it is fine.
+    static func problem(name: String) -> String? {
+        let n = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        if n.isEmpty { return "Enter a name for the repo." }
+        if n == "." || n == ".." || n.hasSuffix(".git") { return "That name is not allowed. Choose another." }
+        if n.count > 100 { return "A repo name can have at most 100 characters." }
+        if n.unicodeScalars.contains(where: { !(($0.value < 128) && (CharacterSet.alphanumerics.contains($0) || "-_.".unicodeScalars.contains($0))) }) {
+            return "Use only letters, numbers, hyphens, underscores and dots (no spaces)."
+        }
+        return nil
+    }
+
+    /// GitHub's license texts carry placeholders for the year and the holder.
+    static func fillLicense(_ text: String, year: Int, holder: String) -> String {
+        text.replacingOccurrences(of: "[year]", with: String(year)).replacingOccurrences(of: "[yyyy]", with: String(year))
+            .replacingOccurrences(of: "[fullname]", with: holder).replacingOccurrences(of: "[name of copyright owner]", with: holder)
+    }
+}
+
 enum CloneSource {
     /// "owner/name" shorthand (no scheme, no colon, no leading slash): cloned with `gh`, which picks ssh or https from its config.
     static func isShorthand(_ s: String) -> Bool {
