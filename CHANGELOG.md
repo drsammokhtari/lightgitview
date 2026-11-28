@@ -1,5 +1,8 @@
 # Changelog
 
+## v1.5.1 · 2026-11-28
+- **Fixed: the app froze on a repo with thousands of untracked files** (for example rendered video frames or an un-ignored node_modules). The changes list rebuilt its folder rows from every file on each redraw, and the file tree held up to 30,000 files. Now, when a repo has more than 1,000 untracked files, untracked folders are listed as one row each, with a **Show all N files** button above the list that lists every file. Folder rows in the changes list are now built in one pass instead of rescanning every change per folder. The file tree stops at 5,000 files.
+
 ## v1.5.0 · 2026-11-27
 - **Create repo…** (the + button or the workspace menu, next to Clone): makes a new local folder under the folder you pick and the same repo on GitHub as its `origin`. You choose the name, the GitHub account or organisation, Private (the default) or Public (asks to confirm), a description, the first branch name, and optionally a README, a .gitignore template and a license. The app runs `git init`, makes the first commit, then `gh repo create --push`. A name that already exists on GitHub or as a folder is refused before anything is made; if GitHub refuses, the new folder is removed; if only the first push fails, the folder is kept and the message says so. The repo joins the workspaces you tick. Needs the GitHub CLI signed in.
 

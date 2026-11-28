@@ -31,6 +31,8 @@ final class Store: ObservableObject {
     @Published var side: [String: SideInfo] = [:]
     @Published var showClone = false
     @Published var showCreate = false
+    var showAllUntracked = Set<String>()   // repos where the user chose to list every untracked file
+    @Published var collapsedUntracked: [String: Int] = [:]   // repos whose untracked folders are shown collapsed, and how many files that hides
     @Published var revision: [String: Int] = [:]   // bumps after every full reload, so open panes can re-read
     @Published var focusRequest: String?   // a file the tree asks the repo page to show
     @Published var trees: [String: [FileNode]] = [:]
@@ -184,10 +186,25 @@ final class Store: ObservableObject {
         revision[repo.id, default: 0] += 1
     }
 
+    /// `git status` parsed. A repo with thousands of untracked files (rendered frames, an un-ignored node_modules) would make the
+    /// lists crawl, so past `untrackedLimit` untracked folders come back as one row each, with the file count in `collapsedUntracked`.
+    struct StatusFailure: LocalizedError { let text: String; var errorDescription: String? { text } }
+    func statusSnapshot(_ repo: Repo) async throws -> RepoStatus {
+        let args = ["--no-optional-locks", "status", "--porcelain=v2", "--branch", "-z"]
+        let all = await Git.run(args + ["--untracked-files=all"], in: repo.url)
+        guard all.ok else { throw StatusFailure(text: all.text) }
+        let full = StatusParser.parse(all.out)
+        collapsedUntracked[repo.id] = nil
+        guard full.untracked > Store.untrackedLimit, !showAllUntracked.contains(repo.id) else { return full }
+        let norm = await Git.run(args + ["--untracked-files=normal"], in: repo.url)
+        guard norm.ok else { return full }
+        collapsedUntracked[repo.id] = full.untracked
+        return StatusParser.parse(norm.out)
+    }
+
     func readStatus(_ repo: Repo) async {
-        let r = await Git.run(["--no-optional-locks", "status", "--porcelain=v2", "--branch", "--untracked-files=all", "-z"], in: repo.url)
-        guard r.ok else { setError("\(repo.name): \(r.text)"); return }
-        var st = StatusParser.parse(r.out)
+        var st: RepoStatus
+        do { st = try await statusSnapshot(repo) } catch { setError("\(repo.name): \(error.localizedDescription)"); return }
         let ns = await Git.run(["--no-optional-locks", "diff", "HEAD", "--numstat"], in: repo.url)
         let counts = ns.ok ? StatusParser.numstat(ns.out) : [:]
         for i in st.changes.indices {
@@ -587,7 +604,9 @@ final class Store: ObservableObject {
     }
 
     // MARK: file tree
-    static let treeLimit = 30_000
+    static let treeLimit = 5_000
+    /// More untracked files than this and untracked folders are listed collapsed.
+    static let untrackedLimit = 1_000
 
     /// The repo's files for the tree: tracked plus untracked that are not ignored (so .git and ignored folders stay out).
     func loadTree(_ repo: Repo) async {

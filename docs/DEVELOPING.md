@@ -28,6 +28,7 @@ sh scripts/make-sample.sh ~/sample-workspace   # real sample repos to try the ap
 | Editing a file (open, edit, save) | `Store.fileForEditing`, `Store.saveFile`, `openFile` and `saveEdit` in `Views.swift` |
 | File tree sidebar | `FileNode` and `TreeBuilder` in `Git.swift`, `Store.loadTree`, `FileTreePane` in `Views.swift` |
 | Sync a workspace (pull, push, tag risky repos) | `Store.syncRepos`, `Store.syncOne`, `SyncTag` in `Store.swift`; `SidebarRow` tag and the Sync buttons in `Views.swift`; `scripts/make-sync-sample.sh` builds the nine test cases |
+| Large repos (collapsing untracked folders, tree limit) | `Store.untrackedLimit`, `Store.treeLimit`, `Store.readStatus`, `Store.collapsedUntracked` |
 | Clone repo | `Store.cloneRepo`, `CloneSource` in `Git.swift`, `CloneSheet` in `Views.swift` |
 | Create repo (local folder + GitHub origin) | `Store.createRepo`, `makeLocalRepo`, `githubOwners`, `NewRepo` in `Git.swift`, `CreateRepoSheet` in `Views.swift` |
 | Delete repo (disk, and disk plus GitHub) | `Store.deleteRepo`, `Store.deleteRepoEverywhere`, `GitHubRemote` in `Git.swift`, `askDeleteRepo` and `askDeleteEverywhere` in `Views.swift` |

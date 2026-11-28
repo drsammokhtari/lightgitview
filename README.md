@@ -4,7 +4,7 @@
 
 **Every repo, one light window.** A small Mac app that shows all your git repos in one place, with what changed in each, and lets you commit, pull and push without opening a terminal.
 
-![version](https://img.shields.io/badge/version-1.5.0-0F766E) ![platform](https://img.shields.io/badge/macOS-14%2B-0F766E) ![licence](https://img.shields.io/badge/licence-MIT-0F766E)
+![version](https://img.shields.io/badge/version-1.5.1-0F766E) ![platform](https://img.shields.io/badge/macOS-14%2B-0F766E) ![licence](https://img.shields.io/badge/licence-MIT-0F766E)
 
 <p align="center"><img src="docs/screenshot.png" width="900" alt="LightGitView showing a repo's changed files as a folder tree, a commit message ready, and the side panel with branches and commits to push"></p>
 

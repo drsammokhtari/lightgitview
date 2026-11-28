@@ -548,27 +548,39 @@ struct RepoDetail: View {
     struct Row: Identifiable {
         let id: String; let depth: Int; let name: String
         let change: Change?; let files: [String]   // files: every file path under a folder row
+        var under: [Change] = []                   // the changes behind those paths
         var isDir: Bool { change == nil }
     }
 
+    /// The list's rows, built in one pass: folder rows come from a map of folder -> changes under it, so a repo with
+    /// thousands of changed files stays linear instead of rescanning every change for every folder.
     var rows: [Row] {
+        let sorted = st.changes.sorted(by: { $0.path.localizedStandardCompare($1.path) == .orderedAscending })
+        var under: [String: [Change]] = [:]
+        for c in sorted {
+            let parts = c.path.split(separator: "/")
+            guard parts.count > 1 else { continue }
+            var dir = ""
+            for p in parts.dropLast() { dir += (dir.isEmpty ? "" : "/") + p; under[dir, default: []].append(c) }
+        }
         var out: [Row] = []
         var emitted = Set<String>()
-        for c in st.changes.sorted(by: { $0.path.localizedStandardCompare($1.path) == .orderedAscending }) {
+        for c in sorted {
             let parts = c.path.split(separator: "/").map(String.init)
             var hidden = false
+            var dir = ""
             for i in 0..<max(parts.count - 1, 0) {
-                let dir = parts[0...i].joined(separator: "/")
-                if !emitted.contains(dir) { emitted.insert(dir); out.append(dirRow(dir, i)) }
+                dir += (i == 0 ? "" : "/") + parts[i]
+                if !emitted.contains(dir) {
+                    emitted.insert(dir)
+                    let cs = under[dir] ?? []
+                    out.append(Row(id: "dir:" + dir, depth: i, name: parts[i], change: nil, files: cs.map(\.path), under: cs))
+                }
                 if collapsed.contains(dir) { hidden = true; break }
             }
-            if !hidden { out.append(Row(id: c.path, depth: parts.count - 1, name: parts.last ?? c.path, change: c, files: [c.path])) }
+            if !hidden { out.append(Row(id: c.path, depth: parts.count - 1, name: (parts.last ?? c.path) + (c.path.hasSuffix("/") ? "/" : ""), change: c, files: [c.path], under: [c])) }
         }
         return out
-    }
-    func dirRow(_ dir: String, _ depth: Int) -> Row {
-        let files = st.changes.map(\.path).filter { $0.hasPrefix(dir + "/") }
-        return Row(id: "dir:" + dir, depth: depth, name: (dir as NSString).lastPathComponent, change: nil, files: files)
     }
     func dirOf(_ r: Row) -> String { String(r.id.dropFirst(4)) }
 
@@ -667,6 +679,16 @@ struct RepoDetail: View {
                     Text("No changes in this repo").foregroundStyle(.secondary)
                 }.frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
+              VStack(spacing: 0) {
+                if let hidden = store.collapsedUntracked[repo.id], hidden > 0 {
+                    HStack {
+                        Text("\(hidden) untracked files are shown as folders to keep the list fast.").font(.caption).foregroundStyle(.secondary)
+                        Spacer()
+                        Button("Show all \(hidden) files") { Task { store.showAllUntracked.insert(repo.id); await store.reload(repo) } }
+                            .controlSize(.small).help("List every untracked file. A very large list can be slow.")
+                    }.padding(8)
+                    Divider()
+                }
                 List(selection: Binding(get: { focus?.id }, set: { id in if let id { Task { await openFile(id) } } })) {
                     ForEach(rows) { r in
                         if let c = r.change {
@@ -704,15 +726,16 @@ struct RepoDetail: View {
                                 Text(r.name).lineLimit(1)
                                 Spacer(minLength: 4)
                                 Text("\(on)/\(r.files.count)").font(.caption).foregroundStyle(.secondary)
-                                rowActions(r.files, st.changes.filter { r.files.contains($0.path) }, dir: dirOf(r))
+                                rowActions(r.files, r.under, dir: dirOf(r))
                             }
                             .font(.callout).padding(.leading, CGFloat(r.depth) * 16)
                             .contentShape(Rectangle())
-                            .contextMenu { dirMenu(dirOf(r), st.changes.filter { r.files.contains($0.path) }, r.files) }
+                            .contextMenu { dirMenu(dirOf(r), r.under, r.files) }
                             .selectionDisabled()
                         }
                     }
                 }
+              }
             }
         }
     }
